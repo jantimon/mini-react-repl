@@ -23,13 +23,14 @@
  */
 
 import { ReplProvider, type ReplProviderProps } from './ReplProvider.tsx';
-import { ReplFileTabs } from './ReplFileTabs.tsx';
+import { ReplFileTabs, type ReplFileTabsProps } from './ReplFileTabs.tsx';
 import { ReplPreview, type ReplPreviewProps } from './ReplPreview.tsx';
 import { EditorHost } from './EditorHost.tsx';
 import type { ReplEditorComponent } from '../types.ts';
 
 export type ReplProps = ReplProviderProps &
-  ReplPreviewProps & {
+  ReplPreviewProps &
+  Pick<ReplFileTabsProps, 'onAddFile' | 'onDeleteFile'> & {
     /**
      * Editor adapter component (e.g. `MonacoReplEditor` from
      * `mini-react-repl/editor-monaco`). Required.
@@ -49,6 +50,8 @@ export function Repl(props: ReplProps): React.ReactElement {
     showPreviewErrorOverlay,
     onPreviewError,
     onMounted,
+    onAddFile,
+    onDeleteFile,
     className,
     style,
     ...providerProps
@@ -58,7 +61,10 @@ export function Repl(props: ReplProps): React.ReactElement {
     <ReplProvider {...providerProps}>
       <div className={`repl-root ${className ?? ''}`} style={style}>
         <div className="repl-root__main">
-          <ReplFileTabs />
+          <ReplFileTabs
+            {...(onAddFile ? { onAddFile } : {})}
+            {...(onDeleteFile ? { onDeleteFile } : {})}
+          />
           <EditorHost editor={editor} />
         </div>
         <div className="repl-root__side">

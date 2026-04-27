@@ -18,15 +18,16 @@ export type ReplFileTabsProps = {
   /** Optional inline styles applied to the outer `<div>`. */
   style?: React.CSSProperties;
   /**
-   * Called when the user clicks the "+" button. If omitted, a built-in
-   * `prompt()` flow is used. Override to provide a custom dialog.
+   * Called when the user clicks the "+" button. Return the new file name
+   * (sync or async). Return `null`/`undefined`/`''` to cancel. If omitted,
+   * a built-in `prompt()` flow is used.
    */
-  onAddFile?: () => void;
+  onAddFile?: () => string | null | undefined | Promise<string | null | undefined>;
   /**
-   * Called when the user requests deletion. If omitted, deletion is allowed
-   * with no confirmation. Return `false` to cancel.
+   * Called when the user requests deletion (sync or async). Return `false`
+   * to cancel. If omitted, deletion proceeds with no confirmation.
    */
-  onDeleteFile?: (path: string) => boolean | void;
+  onDeleteFile?: (path: string) => boolean | void | Promise<boolean | void>;
 };
 
 export function ReplFileTabs(props: ReplFileTabsProps): React.ReactElement {
@@ -36,12 +37,11 @@ export function ReplFileTabs(props: ReplFileTabsProps): React.ReactElement {
 
   const paths = useMemo(() => Object.keys(state.files).sort(), [state.files]);
 
-  const handleAdd = () => {
-    if (props.onAddFile) {
-      props.onAddFile();
-      return;
-    }
-    const name = window.prompt('New file name (e.g. Counter.tsx):')?.trim();
+  const handleAdd = async () => {
+    const raw = props.onAddFile
+      ? await props.onAddFile()
+      : window.prompt('New file name (e.g. Counter.tsx):');
+    const name = raw?.trim();
     if (!name) return;
     if (!/\.(tsx?|jsx?|css)$/.test(name)) {
       window.alert('File name must end in .tsx, .ts, .jsx, .js, or .css');
@@ -55,13 +55,13 @@ export function ReplFileTabs(props: ReplFileTabsProps): React.ReactElement {
     actions.setActivePath(name);
   };
 
-  const handleDelete = (path: string) => {
+  const handleDelete = async (path: string) => {
     if (path === actions.entry) {
       window.alert(`Cannot delete the entry file '${actions.entry}'`);
       return;
     }
     if (props.onDeleteFile) {
-      const ok = props.onDeleteFile(path);
+      const ok = await props.onDeleteFile(path);
       if (ok === false) return;
     }
     actions.removeFile(path);

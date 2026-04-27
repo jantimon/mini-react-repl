@@ -106,20 +106,22 @@ import {
 
 ### `<Repl/>` props
 
-| prop                      | type                        | required | default      |                                                                     |
-| ------------------------- | --------------------------- | -------- | ------------ | ------------------------------------------------------------------- |
-| `files`                   | `Record<string, string>`    | yes      | —            | flat path → source map                                              |
-| `onFilesChange`           | `(next) => void`            | yes      | —            | called on every set/remove/rename                                   |
-| `vendor`                  | `VendorBundle`              | yes      | —            | `{ importMap, baseUrl? }`                                           |
-| `editor`                  | `React.FC<ReplEditorProps>` | yes      | —            | adapter component                                                   |
-| `entry`                   | `string`                    | no       | `'App.tsx'`  | the logical entry path                                              |
-| `transformDebounceMs`     | `number`                    | no       | `150`        |                                                                     |
-| `headHtml`                | `string`                    | no       | `''`         | injected into iframe `<head>`                                       |
-| `bodyHtml`                | `string`                    | no       | `''`         | injected into iframe `<body>`                                       |
-| `showPreviewErrorOverlay` | `boolean`                   | no       | `true`       | toggle built-in overlay                                             |
-| `onPreviewError`          | `(err: ReplError) => void`  | no       | —            | transform + runtime errors                                          |
-| `swcWasmUrl`              | `string`                    | no       | jsdelivr CDN | self-host this for offline / CI                                     |
-| `loader`                  | `ReplLoader`                | no       | —            | per-file pre-processor; see [Custom file types](#custom-file-types) |
+| prop                      | type                                              | required | default      |                                                                     |
+| ------------------------- | ------------------------------------------------- | -------- | ------------ | ------------------------------------------------------------------- |
+| `files`                   | `Record<string, string>`                          | yes      | —            | flat path → source map                                              |
+| `onFilesChange`           | `(next) => void`                                  | yes      | —            | called on every set/remove/rename                                   |
+| `vendor`                  | `VendorBundle`                                    | yes      | —            | `{ importMap, baseUrl? }`                                           |
+| `editor`                  | `React.FC<ReplEditorProps>`                       | yes      | —            | adapter component                                                   |
+| `entry`                   | `string`                                          | no       | `'App.tsx'`  | the logical entry path                                              |
+| `transformDebounceMs`     | `number`                                          | no       | `150`        |                                                                     |
+| `headHtml`                | `string`                                          | no       | `''`         | injected into iframe `<head>`                                       |
+| `bodyHtml`                | `string`                                          | no       | `''`         | injected into iframe `<body>`                                       |
+| `showPreviewErrorOverlay` | `boolean`                                         | no       | `true`       | toggle built-in overlay                                             |
+| `onPreviewError`          | `(err: ReplError) => void`                        | no       | —            | transform + runtime errors                                          |
+| `onAddFile`               | `() => MaybePromise<string \| null \| undefined>` | no       | —            | custom add-file dialog; return the new path, or nullish to cancel   |
+| `onDeleteFile`            | `(path) => MaybePromise<boolean \| void>`         | no       | —            | confirm/cancel deletion; return `false` to cancel                   |
+| `swcWasmUrl`              | `string`                                          | no       | jsdelivr CDN | self-host this for offline / CI                                     |
+| `loader`                  | `ReplLoader`                                      | no       | —            | per-file pre-processor; see [Custom file types](#custom-file-types) |
 
 ### Custom file types
 
