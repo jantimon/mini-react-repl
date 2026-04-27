@@ -44,7 +44,8 @@
     },
     "./editor-monaco": {
       "types": "./dist/editor-monaco/index.d.ts",
-      "import": "./dist/editor-monaco/index.js"
+      "node": "./dist/editor-monaco/index.node.js",
+      "default": "./dist/editor-monaco/index.js"
     },
     "./vendor-default": {
       "types": "./dist/vendor-default/index.d.ts",

@@ -7,6 +7,11 @@ export default defineConfig({
     // inside dist/index.js resolves correctly.
     worker: 'src/engine/worker.ts',
     'editor-monaco/index': 'src/editor-monaco/index.tsx',
+    // SSR no-op stub. Selected by the `node` export condition so that
+    // server-side bundlers don't pull in monaco-editor (which touches
+    // `window` at module init).
+    'editor-monaco/index.node': 'src/editor-monaco/index.node.tsx',
+    // Browser-targeted default export
     'vendor-default/index': 'src/vendor-default/index.ts',
     'vendor-builder/build': 'src/vendor-builder/build.ts',
     'vendor-builder/cli': 'src/vendor-builder/cli.ts',

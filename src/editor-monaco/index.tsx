@@ -13,6 +13,12 @@
  * **Opt out** by assigning `self.MonacoEnvironment` *before* importing this
  * module; the auto-setup is guarded and will not overwrite an existing value.
  *
+ * **SSR-safe.** The package's `node` export condition resolves to a no-op
+ * stub that renders the same outer container, so importing this module from
+ * a server component (Next.js, Remix) does not crash on Monaco's eager
+ * `window` access. The real adapter loads in the client bundle and takes
+ * over on hydration.
+ *
  * The adapter configures Monaco's TypeScript service on mount with compiler
  * options matching the runtime transform (automatic JSX, ES2022, bundler
  * resolution). Pass `compilerOptions` / `diagnosticsOptions` to override.
@@ -52,10 +58,9 @@ if (typeof self !== 'undefined' && !self.MonacoEnvironment) {
           { type: 'module' },
         );
       }
-      return new Worker(
-        new URL('monaco-editor/esm/vs/editor/editor.worker.js', import.meta.url),
-        { type: 'module' },
-      );
+      return new Worker(new URL('monaco-editor/esm/vs/editor/editor.worker.js', import.meta.url), {
+        type: 'module',
+      });
     },
   };
 }
