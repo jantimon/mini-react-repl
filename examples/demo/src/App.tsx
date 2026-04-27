@@ -9,8 +9,8 @@ import 'mini-react-repl/theme.css';
 import swcWasmUrl from '@swc/wasm-web/wasm_bg.wasm?url';
 
 const HELLO: Files = {
-  'App.tsx': `import { format } from 'date-fns'
-import { Counter } from './Counter'
+  'App.tsx': `import { format } from 'date-fns';
+import { Counter } from './Counter';
 
 export default function App() {
   return (
@@ -19,12 +19,12 @@ export default function App() {
       <Counter />
     </main>
   )
-}
+};
 `,
-  'Counter.tsx': `import { useState } from 'react'
+  'Counter.tsx': `import { useState } from 'react';
 
 export function Counter() {
-  const [n, setN] = useState(0)
+  const [n, setN] = useState(0);
   return (
     <button
       data-testid="counter"
@@ -40,7 +40,7 @@ export function Counter() {
       count: {n}
     </button>
   )
-}
+};
 `,
 };
 
