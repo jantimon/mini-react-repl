@@ -36,7 +36,6 @@
  * @public
  */
 
-import * as esbuild from 'esbuild';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { resolve, join, dirname, relative } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -125,11 +124,34 @@ export async function build(options: BuildOptions): Promise<VendorBundle> {
   return types ? { importMap, types } : { importMap };
 }
 
+/**
+ * esbuild is an optional peer dependency. Defer the import so this module
+ * can be loaded (e.g. for type-only users) without esbuild installed, and
+ * so the failure mode when it's missing is a friendly install hint rather
+ * than a raw ESM resolution error.
+ */
+let esbuildPromise: Promise<typeof import('esbuild')> | null = null;
+async function loadEsbuild(): Promise<typeof import('esbuild')> {
+  if (!esbuildPromise) {
+    esbuildPromise = import('esbuild').catch((err) => {
+      esbuildPromise = null;
+      const orig = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        "mini-react-repl/vendor-builder requires 'esbuild' (optional peer dependency). " +
+          'Install it as a dev dep: `npm i -D esbuild` (or `pnpm add -D esbuild`). ' +
+          `Original error: ${orig}`,
+      );
+    });
+  }
+  return esbuildPromise;
+}
+
 async function bundlePackage(
   specifier: string,
   nodeEnv: 'development' | 'production',
   cwd: string,
 ): Promise<string> {
+  const esbuild = await loadEsbuild();
   const result = await esbuild.build({
     stdin: {
       contents: `export * from ${JSON.stringify(specifier)};

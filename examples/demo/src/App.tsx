@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Repl, type Files, type ReplError } from 'mini-react-repl';
 import { defaultVendor } from 'mini-react-repl/vendor-default';
 import { MonacoReplEditor } from 'mini-react-repl/editor-monaco';
@@ -44,14 +44,31 @@ export function Counter() {
 `,
 };
 
+// In ?test mode we inject a small listener into the iframe so e2e can verify
+// that host → iframe postMessage works via `iframeRef`. Lives only when the
+// query param is present so production bundles aren't affected.
+const TEST_BODY_HTML = `<div id="ext-msg" data-testid="ext-msg"></div>
+<script>
+  window.addEventListener('message', function(e) {
+    var d = e.data;
+    if (d && d.type === '__ext_test__') {
+      var el = document.getElementById('ext-msg');
+      if (el) el.textContent = String(d.payload);
+    }
+  });
+</script>`;
+
 export function App() {
   const [files, setFiles] = useState<Files>(HELLO);
   const [lastError, setLastError] = useState<ReplError | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const isTestMode =
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('test');
 
   // Test hook: when ?test is in the URL, expose imperative actions on
   // window so Playwright can drive the file table without typing into Monaco.
   useEffect(() => {
-    if (!new URLSearchParams(window.location.search).has('test')) return;
+    if (!isTestMode) return;
     (window as unknown as { __replTest__: unknown }).__replTest__ = {
       setFile: (path: string, source: string) => setFiles((f) => ({ ...f, [path]: source })),
       removeFile: (path: string) =>
@@ -75,8 +92,17 @@ export function App() {
           resource: monaco.Uri.parse(`file:///workspace/${path}`),
         });
       },
+      // Forwards via the new <ReplPreview iframeRef> API so e2e can verify
+      // host → iframe postMessage end-to-end.
+      postToIframe: (payload: unknown) => {
+        const win = iframeRef.current?.contentWindow;
+        if (!win) return false;
+        win.postMessage({ type: '__ext_test__', payload }, '*');
+        return true;
+      },
+      hasIframeRef: () => Boolean(iframeRef.current),
     };
-  }, [lastError]);
+  }, [lastError, isTestMode]);
 
   return (
     <Repl
@@ -86,6 +112,8 @@ export function App() {
       editor={MonacoReplEditor}
       swcWasmUrl={swcWasmUrl}
       onPreviewError={setLastError}
+      iframeRef={iframeRef}
+      {...(isTestMode ? { bodyHtml: TEST_BODY_HTML } : {})}
     />
   );
 }

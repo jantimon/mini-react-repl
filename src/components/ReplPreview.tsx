@@ -33,6 +33,15 @@ export type ReplPreviewProps = {
   showPreviewErrorOverlay?: boolean;
   onPreviewError?: (err: ReplError) => void;
   onMounted?: () => void;
+  /**
+   * Forwarded to the underlying `<iframe>` element. Accepts an object ref
+   * (`useRef<HTMLIFrameElement>(null)`) or a callback ref. Use it together
+   * with `onMounted` to `postMessage` host-computed data into the iframe
+   * (e.g. SQL results, theme, env). Note that messages with
+   * `{ __repl: true, ... }` are reserved for the library's runtime
+   * protocol — pick a different shape for your own messages.
+   */
+  iframeRef?: React.Ref<HTMLIFrameElement>;
   className?: string;
   style?: React.CSSProperties;
 };
@@ -50,6 +59,12 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
   onErrorRef.current = props.onPreviewError;
   const onMountedRef = useRef(props.onMounted);
   onMountedRef.current = props.onMounted;
+  // Stash the consumer's iframeRef so its identity changes don't churn the
+  // heavy iframe lifecycle below. Forwarding happens inside `setupIframe`
+  // so consumers see the iframe attached at ref-phase timing (before the
+  // first useLayoutEffect), matching the contract of a normal forwarded ref.
+  const iframeRefBox = useRef(props.iframeRef);
+  iframeRefBox.current = props.iframeRef;
 
   // The TransformClient is created inside the iframe-lifecycle ref callback
   // and shared with the file-sync effect via this ref. The setLastError
@@ -83,7 +98,27 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
   // needed; the dep change drives the lifecycle.
   const setupIframe = useCallback(
     (iframe: HTMLIFrameElement | null) => {
-      if (!iframe) return;
+      // Forward to the consumer's iframeRef. Read via the ref box so this
+      // callback's deps don't include `props.iframeRef` (which would tear
+      // down + re-create the transform client on every consumer render
+      // when an inline callback ref is used).
+      const userRef = iframeRefBox.current;
+      let detachUserRef: (() => void) | undefined;
+      if (userRef) {
+        if (typeof userRef === 'function') {
+          const ret = userRef(iframe);
+          // React 19 callback refs may return a cleanup; prefer it. Otherwise
+          // we manually call the ref with null on detach.
+          detachUserRef = typeof ret === 'function' ? ret : () => userRef(null);
+        } else {
+          (userRef as React.MutableRefObject<HTMLIFrameElement | null>).current = iframe;
+          detachUserRef = () => {
+            (userRef as React.MutableRefObject<HTMLIFrameElement | null>).current = null;
+          };
+        }
+      }
+
+      if (!iframe) return detachUserRef;
 
       let disposed = false;
       let booted = false;
@@ -200,6 +235,7 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
         window.removeEventListener('message', onMessage);
         client.dispose();
         if (clientRef.current === client) clientRef.current = null;
+        detachUserRef?.();
       };
     },
     [srcdoc, entry, swcWasmUrl, loader, setLastError],

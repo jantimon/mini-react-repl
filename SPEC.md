@@ -218,6 +218,8 @@ read them off `<ReplPreview/>`'s `onPreviewError` callback.
 |                  | `bodyHtml`                | `string`                   | `''`             | Injected into iframe `<body>` after `#root`. |
 |                  | `showPreviewErrorOverlay` | `boolean`                  | `true`           | Toggles built-in overlay.                    |
 |                  | `onPreviewError`          | `(err: ReplError) => void` | undefined        | Both transform + runtime errors.             |
+|                  | `onMounted`               | `() => void`               | undefined        | Fires when the iframe runtime mounts.        |
+|                  | `iframeRef`               | `Ref<HTMLIFrameElement>`   | undefined        | Forwarded to the underlying `<iframe>`.      |
 |                  | `swcWasmUrl`              | `string`                   | jsdelivr CDN URL | Override for self-hosted swc-wasm.           |
 | `<Repl>`         | (all of above)            |                            |                  | Convenience component forwards them.         |
 |                  | `editor`                  | React component            | — required —     | E.g. `MonacoReplEditor`.                     |
@@ -509,6 +511,43 @@ Same shape as the standalone version (§9.2 of original SPEC). Both directions:
 
 The iframe-to-parent error messages drive both the optional in-iframe overlay
 and the `onPreviewError` callback.
+
+All library messages are tagged `{ __repl: true, ... }`. **Consumer messages
+must not collide with that shape.** Use a different envelope (`type`,
+`channel`, …) for app-level postMessage traffic between host and iframe.
+
+### 8.5 Talking to the iframe from the host
+
+For host-computed data (BigQuery results, theme, env, …) flowing into the
+iframe at runtime, attach `iframeRef` and post after `onMounted`:
+
+```tsx
+const iframeRef = useRef<HTMLIFrameElement>(null);
+
+<ReplPreview
+  iframeRef={iframeRef}
+  onMounted={() => {
+    iframeRef.current?.contentWindow?.postMessage(
+      { type: 'data', channel: 'sql-results', rows },
+      '*',
+    );
+  }}
+/>;
+```
+
+Inside user code, listen on `window`:
+
+```tsx
+useEffect(() => {
+  const onMsg = (e: MessageEvent) => {
+    if (e.data?.type === 'data' && e.data.channel === 'sql-results') {
+      // …
+    }
+  };
+  window.addEventListener('message', onMsg);
+  return () => window.removeEventListener('message', onMsg);
+}, []);
+```
 
 ---
 

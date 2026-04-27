@@ -18,6 +18,8 @@ declare global {
       getMarkers: (
         path: string,
       ) => Promise<Array<{ code?: string | { value: string }; severity: number; message: string }>>;
+      postToIframe: (payload: unknown) => boolean;
+      hasIframeRef: () => boolean;
     };
   }
 }
@@ -201,6 +203,24 @@ export function Counter() {
     );
     expect(finalErrorCodes).not.toContain('17004');
     expect(finalErrorCodes).not.toContain('2792');
+  });
+
+  test('iframeRef forwards to <iframe>; host can postMessage in', async ({ page }) => {
+    await gotoDemo(page);
+    await expect(preview(page).locator('h1')).toContainText(/Today is/i, { timeout: 30_000 });
+
+    // Demo passes `iframeRef` to <Repl>; the demo test hook exposes
+    // `hasIframeRef()` which returns true once the ref attached.
+    await expect.poll(() => page.evaluate(() => window.__replTest__.hasIframeRef())).toBe(true);
+
+    // The bodyHtml-injected listener writes into #ext-msg when it receives
+    // `{ type: '__ext_test__', payload }`. Posting via the ref should land.
+    await page.evaluate(() => window.__replTest__.postToIframe('hello-from-host'));
+    await expect(preview(page).locator('[data-testid=ext-msg]')).toHaveText('hello-from-host');
+
+    // A second post should overwrite — confirms the listener stays mounted.
+    await page.evaluate(() => window.__replTest__.postToIframe('round-two'));
+    await expect(preview(page).locator('[data-testid=ext-msg]')).toHaveText('round-two');
   });
 
   test('Monaco surfaces a real type error from vendor types', async ({ page }) => {

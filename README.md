@@ -118,6 +118,8 @@ import {
 | `bodyHtml`                | `string`                                          | no       | `''`         | injected into iframe `<body>`                                       |
 | `showPreviewErrorOverlay` | `boolean`                                         | no       | `true`       | toggle built-in overlay                                             |
 | `onPreviewError`          | `(err: ReplError) => void`                        | no       | —            | transform + runtime errors                                          |
+| `onMounted`               | `() => void`                                      | no       | —            | fires when the iframe runtime mounts the entry module               |
+| `iframeRef`               | `Ref<HTMLIFrameElement>`                          | no       | —            | forwarded to the underlying `<iframe>`; `postMessage` host data in  |
 | `onAddFile`               | `() => MaybePromise<string \| null \| undefined>` | no       | —            | custom add-file dialog; return the new path, or nullish to cancel   |
 | `onDeleteFile`            | `(path) => MaybePromise<boolean \| void>`         | no       | —            | confirm/cancel deletion; return `false` to cancel                   |
 | `swcWasmUrl`              | `string`                                          | no       | jsdelivr CDN | self-host this for offline / CI                                     |
@@ -241,6 +243,9 @@ if your demo needs literally only those libs, stop reading.
 You're going to outgrow the default. when that happens:
 
 ```sh
+# repl-vendor-build needs esbuild; it's an optional peer dep, install once:
+npm i -D esbuild
+
 npx repl-vendor-build \
   --packages react,react-dom,zod,framer-motion,my-internal-lib \
   --out public/vendor \

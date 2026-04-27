@@ -43,10 +43,6 @@ export function ReplFileTabs(props: ReplFileTabsProps): React.ReactElement {
       : window.prompt('New file name (e.g. Counter.tsx):');
     const name = raw?.trim();
     if (!name) return;
-    if (!/\.(tsx?|jsx?|css)$/.test(name)) {
-      window.alert('File name must end in .tsx, .ts, .jsx, .js, or .css');
-      return;
-    }
     if (name in state.files) {
       window.alert(`'${name}' already exists`);
       return;

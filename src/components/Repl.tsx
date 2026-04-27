@@ -50,6 +50,7 @@ export function Repl(props: ReplProps): React.ReactElement {
     showPreviewErrorOverlay,
     onPreviewError,
     onMounted,
+    iframeRef,
     onAddFile,
     onDeleteFile,
     className,
@@ -74,6 +75,7 @@ export function Repl(props: ReplProps): React.ReactElement {
             {...(showPreviewErrorOverlay !== undefined ? { showPreviewErrorOverlay } : {})}
             {...(onPreviewError ? { onPreviewError } : {})}
             {...(onMounted ? { onMounted } : {})}
+            {...(iframeRef ? { iframeRef } : {})}
           />
         </div>
       </div>

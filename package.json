@@ -1,6 +1,6 @@
 {
   "name": "mini-react-repl",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Browser-only React TSX REPL — multi-file editor, live preview, real Fast Refresh, no backend.",
   "keywords": [
     "fast-refresh",
@@ -102,11 +102,15 @@
     "vitest": "^4.1.5"
   },
   "peerDependencies": {
+    "esbuild": ">=0.21",
     "monaco-editor": ">=0.45",
     "react": ">=19",
     "react-dom": ">=19"
   },
   "peerDependenciesMeta": {
+    "esbuild": {
+      "optional": true
+    },
     "monaco-editor": {
       "optional": true
     }

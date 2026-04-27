@@ -99,7 +99,27 @@ Examples:
 `);
 }
 
+/**
+ * Verify esbuild is installed before doing any other work. esbuild is an
+ * optional peerDependency so consumers who only use vendor-default don't
+ * pay for ~25 MB of platform-specific binaries. When it's missing here,
+ * we want the install hint rather than the raw ESM resolution error.
+ */
+async function ensureEsbuildInstalled(): Promise<void> {
+  try {
+    await import('esbuild');
+  } catch {
+    process.stderr.write(
+      "✗ repl-vendor-build requires 'esbuild', which is not installed.\n" +
+        '  Install it as a dev dependency:\n' +
+        '    npm i -D esbuild     (or `pnpm add -D esbuild`, `yarn add -D esbuild`)\n',
+    );
+    process.exit(1);
+  }
+}
+
 async function main(): Promise<void> {
+  await ensureEsbuildInstalled();
   const args = parseArgs(process.argv.slice(2));
   const result = await build({
     packages: args.packages,
