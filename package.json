@@ -61,7 +61,7 @@
     "./theme.css": "./dist/theme.css"
   },
   "scripts": {
-    "build": "tsup && node scripts/build-runtime.mjs && node scripts/build-default-vendor.mjs && cp src/theme.css dist/theme.css",
+    "build": "node scripts/build-runtime.mjs && node scripts/build-default-vendor.mjs && tsup && cp src/theme.css dist/theme.css",
     "build:lib": "tsup",
     "build:runtime": "node scripts/build-runtime.mjs",
     "build:vendor": "node scripts/build-default-vendor.mjs",
