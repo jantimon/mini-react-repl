@@ -24,7 +24,6 @@ export default defineConfig({
     'react-dom',
     'react-dom/client',
     'monaco-editor',
-    '@swc/wasm-web',
     'es-module-lexer',
     'react-refresh/runtime',
     'esbuild',
@@ -36,4 +35,9 @@ export default defineConfig({
     'node:url',
     'node:fs/promises',
   ],
+  // Force-bundle into `dist/worker.js`. tsup externalizes all `dependencies`
+  // by default; without this, the worker keeps a bare `import ... from
+  // '@swc/wasm-web'` that consumer bundlers (Rolldown in particular) inline
+  // verbatim into a `data:` URL where bare specifiers can't resolve.
+  noExternal: ['@swc/wasm-web'],
 });
