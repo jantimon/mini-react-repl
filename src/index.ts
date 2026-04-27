@@ -21,6 +21,7 @@ export { ReplFileTabs, type ReplFileTabsProps } from './components/ReplFileTabs.
 export { ReplErrorOverlay, type ReplErrorOverlayProps } from './components/ReplErrorOverlay.tsx';
 export { EditorHost, type EditorHostProps } from './components/EditorHost.tsx';
 export { useRepl, type UseReplReturn } from './hooks/useRepl.ts';
+export { defaultLoader } from './engine/default-loader.ts';
 export type {
   Files,
   VendorBundle,
@@ -29,4 +30,9 @@ export type {
   ReplEditorProps,
   ReplEditorComponent,
   TypeBundle,
+  ReplLoader,
+  ReplLoaderInput,
+  ReplLoaderResult,
+  ReplTransform,
+  ReplTransformOptions,
 } from './types.ts';

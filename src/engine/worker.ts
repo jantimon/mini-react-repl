@@ -27,6 +27,12 @@ type TransformMessage = {
   id: number;
   path: string;
   source: string;
+  /**
+   * Override for the SWC `jsc.parser.tsx` flag. When omitted, derived from
+   * the path extension (`.tsx` / `.jsx` → true). Used by loader-produced
+   * modules whose path doesn't carry a JS-like extension.
+   */
+  tsx?: boolean;
 };
 
 type IncomingMessage = InitMessage | TransformMessage;
@@ -70,7 +76,7 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
     }
     try {
       await initialized;
-      const isTsx = msg.path.endsWith('.tsx') || msg.path.endsWith('.jsx');
+      const isTsx = msg.tsx ?? (msg.path.endsWith('.tsx') || msg.path.endsWith('.jsx'));
       const result = await transform(msg.source, {
         filename: msg.path,
         sourceMaps: 'inline',

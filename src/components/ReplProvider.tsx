@@ -19,7 +19,7 @@ import {
   type ReplActionsContextValue,
   type ReplStateContextValue,
 } from './context.ts';
-import type { Files, VendorBundle, ReplError } from '../types.ts';
+import type { Files, VendorBundle, ReplError, ReplLoader } from '../types.ts';
 
 export type ReplProviderProps = {
   /** Source of truth for the file table. Required. */
@@ -47,6 +47,13 @@ export type ReplProviderProps = {
    * Self-hosted swc-wasm URL. **Boot-time only.** See {@link vendor}.
    */
   swcWasmUrl?: string;
+  /**
+   * Optional pre-processor invoked once per file. Lets you turn arbitrary
+   * file types (`.sqlite`, `.md`, `.json`, ...) into a JS module or CSS the
+   * REPL can execute. Return `null` to fall through to the built-in
+   * extension-based dispatch. **Boot-time only.** See {@link vendor}.
+   */
+  loader?: ReplLoader;
   /** Initial selected file. Defaults to `entry`. */
   defaultActivePath?: string;
   children?: React.ReactNode;
@@ -74,6 +81,7 @@ export function ReplProvider(props: ReplProviderProps): React.ReactElement {
     entry: props.entry ?? 'App.tsx',
     vendor: props.vendor,
     swcWasmUrl: props.swcWasmUrl,
+    loader: props.loader,
   }));
 
   if (process.env.NODE_ENV !== 'production') {
@@ -90,7 +98,8 @@ export function ReplProvider(props: ReplProviderProps): React.ReactElement {
       if ((props.entry ?? 'App.tsx') !== bootConfig.entry) warn('entry');
       if (props.vendor !== bootConfig.vendor) warn('vendor');
       if (props.swcWasmUrl !== bootConfig.swcWasmUrl) warn('swcWasmUrl');
-    }, [props.entry, props.vendor, props.swcWasmUrl, bootConfig]);
+      if (props.loader !== bootConfig.loader) warn('loader');
+    }, [props.entry, props.vendor, props.swcWasmUrl, props.loader, bootConfig]);
   }
 
   const [activePath, setActivePath] = useState<string | null>(
@@ -137,6 +146,7 @@ export function ReplProvider(props: ReplProviderProps): React.ReactElement {
       entry: bootConfig.entry,
       vendor: bootConfig.vendor,
       swcWasmUrl: bootConfig.swcWasmUrl,
+      loader: bootConfig.loader,
       setActivePath,
       setFile,
       removeFile,

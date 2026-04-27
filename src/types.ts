@@ -109,4 +109,71 @@ export type ReplEditorProps = {
 /** A component matching {@link ReplEditorProps}. */
 export type ReplEditorComponent = React.ComponentType<ReplEditorProps>;
 
+/** Options accepted by {@link ReplTransform}. */
+export type ReplTransformOptions = {
+  /**
+   * Whether to parse JSX. Mirrors swc's `jsc.parser.tsx` flag.
+   * @defaultValue `false`
+   */
+  tsx?: boolean;
+};
+
+/**
+ * The built-in swc-wasm transform, scoped to a single file's logical path.
+ * Returns transformed JS (TypeScript stripped, JSX optionally compiled,
+ * React Refresh signatures injected, inline source map). Used by loaders
+ * to leverage the same compiler the {@link defaultLoader} uses.
+ */
+export type ReplTransform = (source: string, options?: ReplTransformOptions) => Promise<string>;
+
+/** Input handed to a {@link ReplLoader} for each file. */
+export type ReplLoaderInput = {
+  /** Logical path of the file (e.g. `'data.sqlite'`, `'App.tsx'`). */
+  path: string;
+  /** Raw source text from the consumer's `files` map. */
+  source: string;
+  /** swc-wasm transform bound to this file's path. */
+  transform: ReplTransform;
+};
+
+/**
+ * What a {@link ReplLoader} returns to claim a file.
+ *
+ * - `{ kind: 'css', source }` — inject `source` as a `<style>` tag.
+ * - `{ kind: 'module', code }` — `code` must be already-compiled JS (call
+ *   `input.transform()` from the loader if you need swc to do that). The
+ *   engine still runs `rewriteImports` on it so relative specifiers resolve.
+ *
+ * Returning `null` / `undefined` skips the file entirely.
+ */
+export type ReplLoaderResult = { kind: 'css'; source: string } | { kind: 'module'; code: string };
+
+/**
+ * Pre-processor invoked once per file (on initial load and on every source
+ * change). Useful for turning custom file types — `.sqlite`, `.md`, `.json`,
+ * `.svg` — into a JS module the REPL can execute, or into CSS the iframe can
+ * inject.
+ *
+ * A user-supplied loader **replaces** the {@link defaultLoader}; delegate
+ * back to it for files you don't care about.
+ *
+ * @example
+ * ```ts
+ * import { defaultLoader, type ReplLoader } from 'mini-react-repl';
+ *
+ * const loader: ReplLoader = async (input) => {
+ *   if (input.path.endsWith('.sqlite')) {
+ *     return {
+ *       kind: 'module',
+ *       code: `export default ${JSON.stringify(parseSqlite(input.source))};`,
+ *     };
+ *   }
+ *   return defaultLoader(input);
+ * };
+ * ```
+ */
+export type ReplLoader = (
+  input: ReplLoaderInput,
+) => ReplLoaderResult | null | undefined | Promise<ReplLoaderResult | null | undefined>;
+
 import type * as React from 'react';

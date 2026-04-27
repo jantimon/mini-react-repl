@@ -106,19 +106,76 @@ import {
 
 ### `<Repl/>` props
 
-| prop                      | type                        | required | default      |                                   |
-| ------------------------- | --------------------------- | -------- | ------------ | --------------------------------- |
-| `files`                   | `Record<string, string>`    | yes      | —            | flat path → source map            |
-| `onFilesChange`           | `(next) => void`            | yes      | —            | called on every set/remove/rename |
-| `vendor`                  | `VendorBundle`              | yes      | —            | `{ importMap, baseUrl? }`         |
-| `editor`                  | `React.FC<ReplEditorProps>` | yes      | —            | adapter component                 |
-| `entry`                   | `string`                    | no       | `'App.tsx'`  | the logical entry path            |
-| `transformDebounceMs`     | `number`                    | no       | `150`        |                                   |
-| `headHtml`                | `string`                    | no       | `''`         | injected into iframe `<head>`     |
-| `bodyHtml`                | `string`                    | no       | `''`         | injected into iframe `<body>`     |
-| `showPreviewErrorOverlay` | `boolean`                   | no       | `true`       | toggle built-in overlay           |
-| `onPreviewError`          | `(err: ReplError) => void`  | no       | —            | transform + runtime errors        |
-| `swcWasmUrl`              | `string`                    | no       | jsdelivr CDN | self-host this for offline / CI   |
+| prop                      | type                        | required | default      |                                                                     |
+| ------------------------- | --------------------------- | -------- | ------------ | ------------------------------------------------------------------- |
+| `files`                   | `Record<string, string>`    | yes      | —            | flat path → source map                                              |
+| `onFilesChange`           | `(next) => void`            | yes      | —            | called on every set/remove/rename                                   |
+| `vendor`                  | `VendorBundle`              | yes      | —            | `{ importMap, baseUrl? }`                                           |
+| `editor`                  | `React.FC<ReplEditorProps>` | yes      | —            | adapter component                                                   |
+| `entry`                   | `string`                    | no       | `'App.tsx'`  | the logical entry path                                              |
+| `transformDebounceMs`     | `number`                    | no       | `150`        |                                                                     |
+| `headHtml`                | `string`                    | no       | `''`         | injected into iframe `<head>`                                       |
+| `bodyHtml`                | `string`                    | no       | `''`         | injected into iframe `<body>`                                       |
+| `showPreviewErrorOverlay` | `boolean`                   | no       | `true`       | toggle built-in overlay                                             |
+| `onPreviewError`          | `(err: ReplError) => void`  | no       | —            | transform + runtime errors                                          |
+| `swcWasmUrl`              | `string`                    | no       | jsdelivr CDN | self-host this for offline / CI                                     |
+| `loader`                  | `ReplLoader`                | no       | —            | per-file pre-processor; see [Custom file types](#custom-file-types) |
+
+### Custom file types
+
+Every file flows through a loader. The default is `defaultLoader`, which
+implements the historic dispatch: `.css` → `<style>` injection,
+`.tsx` / `.ts` / `.jsx` / `.js` → swc-compiled module, anything else → ignored.
+
+Pass `loader` to replace it. The function runs once per file (on first load and
+on every change). It receives the file's `source` plus a `transform` function
+that's the same swc-wasm pipeline `defaultLoader` uses — call it from inside
+your loader if you need TS/JSX compilation. Return a `ReplLoaderResult` to
+claim the file, or `null` / `undefined` to skip it. Most loaders delegate
+unhandled extensions back to `defaultLoader`:
+
+```tsx
+import { defaultLoader, type ReplLoader } from 'mini-react-repl';
+
+const loader: ReplLoader = async (input) => {
+  if (input.path.endsWith('.sqlite')) {
+    // emit plain JS — no swc needed
+    return {
+      kind: 'module',
+      code: `export default ${JSON.stringify(parseSqlite(input.source))};`,
+    };
+  }
+  if (input.path.endsWith('.md')) {
+    // generate TSX, then run it through the same swc pass `.tsx` files use
+    const tsxSource = mdxToTsx(input.source);
+    return { kind: 'module', code: await input.transform(tsxSource, { tsx: true }) };
+  }
+  return defaultLoader(input);
+};
+
+<Repl
+  files={files}
+  onFilesChange={setFiles}
+  vendor={defaultVendor}
+  editor={MonacoReplEditor}
+  loader={loader}
+/>;
+```
+
+`ReplLoaderResult` is a discriminated union:
+
+| variant                            | meaning                                                                                                             |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `{ kind: 'css', source: string }`  | inject `source` as a `<style>` tag                                                                                  |
+| `{ kind: 'module', code: string }` | `code` is already-compiled JS; the engine runs `rewriteImports` on it so relative specifiers resolve to other files |
+| `null` / `undefined`               | skip the file                                                                                                       |
+
+A user file can `import data from './data.sqlite'` once the loader claims it
+— relative imports resolve against the `files` map by literal name first, so
+non-standard extensions just work as long as you write them out.
+
+The `loader` prop is boot-time only (like `vendor` / `entry`); to swap, remount
+the provider with a different `key`.
 
 ### `useRepl()`
 
@@ -495,6 +552,7 @@ src/editor-monaco/    # optional Monaco adapter (separate export)
 src/vendor-default/   # optional default vendor (separate export)
 src/vendor-builder/   # optional vendor CLI (separate export)
 examples/demo/        # vite app, used by playwright
+examples/transform/   # custom-loader example (.md → React)
 ```
 
 E2E tests run against `examples/demo` on chromium only for v1. firefox + webkit
@@ -508,4 +566,4 @@ tradeoffs already made, please skim before proposing reverts.
 
 ## License
 
-MIT.
+MIT

@@ -86,6 +86,30 @@ export type MonacoReplEditorProps = ReplEditorProps & {
    * semantic validation. **Boot-time only.** See {@link compilerOptions}.
    */
   diagnosticsOptions?: monaco.typescript.DiagnosticsOptions;
+  /**
+   * Map a file path to a Monaco language ID. Consulted before the built-in
+   * extension dispatch (`.css` → `css`, `.js`/`.jsx`/`.mjs` → `javascript`,
+   * everything else → `typescript`). Return `undefined` for paths the
+   * default dispatch should still handle.
+   *
+   * Use this for files served by a custom {@link ReplLoader} — e.g. map
+   * `.md` to `'markdown'` for Monaco's bundled markdown grammar.
+   *
+   * @example
+   * ```tsx
+   * const MyMonaco = (props: ReplEditorProps) => (
+   *   <MonacoReplEditor
+   *     {...props}
+   *     languageFor={(path) =>
+   *       path.endsWith('.md') ? 'markdown'
+   *       : path.endsWith('.json') ? 'json'
+   *       : undefined
+   *     }
+   *   />
+   * );
+   * ```
+   */
+  languageFor?: (path: string) => string | undefined;
   className?: string;
   style?: React.CSSProperties;
 };
@@ -149,12 +173,87 @@ function releaseLib(path: string): void {
   }
 }
 
-function languageForPath(path: string): 'typescript' | 'javascript' | 'css' {
+// Monaco's built-in TS diagnostics adapter only re-validates a model when
+// *that* model's content changes — it doesn't follow the import graph. So
+// when the user edits `Counter.tsx`, the markers on `App.tsx` (which
+// imports it) stay frozen until App.tsx is touched.
+//
+// Round-trip to the TS worker for the active model and republish its
+// markers ourselves. `getTypeScriptWorker(uri)` syncs the latest mirror
+// model state into the worker, so the diagnostics we get back reflect the
+// updated dependency. We write to the same marker owner Monaco's adapter
+// uses (the language id) so subsequent edits to the active model overwrite
+// our markers cleanly instead of stacking.
+async function refreshActiveDiagnostics(
+  model: monaco.editor.ITextModel,
+  isStillCurrent: () => boolean,
+): Promise<void> {
+  const getWorker = await monaco.typescript.getTypeScriptWorker();
+  if (!isStillCurrent() || model.isDisposed()) return;
+  const worker = await getWorker(model.uri);
+  if (!isStillCurrent() || model.isDisposed()) return;
+  const uri = model.uri.toString();
+  const [syntactic, semantic] = await Promise.all([
+    worker.getSyntacticDiagnostics(uri),
+    worker.getSemanticDiagnostics(uri),
+  ]);
+  if (!isStillCurrent() || model.isDisposed()) return;
+  const markers = [...syntactic, ...semantic].map((d) => tsDiagnosticToMarker(d, model));
+  monaco.editor.setModelMarkers(model, model.getLanguageId(), markers);
+}
+
+// Mirrors monaco-editor's `DiagnosticMessageChain` (declared in monaco.d.ts
+// but not re-exported from the `typescript` namespace).
+type DiagnosticMessageChain = { messageText: string; next?: DiagnosticMessageChain[] };
+
+function flattenDiagnosticMessage(text: string | DiagnosticMessageChain, indent = 0): string {
+  if (typeof text === 'string') return text;
+  let result = indent === 0 ? text.messageText : '\n' + '  '.repeat(indent) + text.messageText;
+  if (text.next) {
+    for (const n of text.next) result += flattenDiagnosticMessage(n, indent + 1);
+  }
+  return result;
+}
+
+function tsDiagnosticToMarker(
+  d: monaco.typescript.Diagnostic,
+  model: monaco.editor.ITextModel,
+): monaco.editor.IMarkerData {
+  const start = model.getPositionAt(d.start ?? 0);
+  const end = model.getPositionAt((d.start ?? 0) + (d.length ?? 0));
+  const severity =
+    d.category === 0
+      ? monaco.MarkerSeverity.Warning
+      : d.category === 1
+        ? monaco.MarkerSeverity.Error
+        : d.category === 2
+          ? monaco.MarkerSeverity.Hint
+          : monaco.MarkerSeverity.Info;
+  return {
+    severity,
+    startLineNumber: start.lineNumber,
+    startColumn: start.column,
+    endLineNumber: end.lineNumber,
+    endColumn: end.column,
+    message: flattenDiagnosticMessage(d.messageText),
+    code: d.code != null ? String(d.code) : undefined,
+    source: d.source ?? 'ts',
+  };
+}
+
+function defaultLanguageForPath(path: string): string {
   if (path.endsWith('.css')) return 'css';
   if (path.endsWith('.js') || path.endsWith('.jsx') || path.endsWith('.mjs')) {
     return 'javascript';
   }
   return 'typescript';
+}
+
+function resolveLanguage(
+  path: string,
+  custom: ((p: string) => string | undefined) | undefined,
+): string {
+  return custom?.(path) ?? defaultLanguageForPath(path);
 }
 
 /**
@@ -167,6 +266,15 @@ export function MonacoReplEditor(props: MonacoReplEditorProps): React.ReactEleme
   const modelsRef = useRef(new Map<string, monaco.editor.ITextModel>());
   const onChangeRef = useRef(props.onChange);
   onChangeRef.current = props.onChange;
+  // languageFor is consulted inside effects keyed on `files` / `path`. Capture
+  // it in a ref so identity changes don't churn models — Monaco can't change
+  // a model's language post-creation anyway, so changes only take effect on
+  // the next add/swap.
+  const languageForRef = useRef(props.languageFor);
+  languageForRef.current = props.languageFor;
+  // Generation counter so a slow worker round-trip from a previous sync
+  // can't overwrite markers from a later one.
+  const refreshGenRef = useRef(0);
 
   // Mount the editor once. TS compiler / diagnostics options are boot-time:
   // they're global Monaco state (setCompilerOptions invalidates every
@@ -199,6 +307,13 @@ export function MonacoReplEditor(props: MonacoReplEditorProps): React.ReactEleme
       lineNumbers: 'on',
       renderLineHighlight: 'all',
       theme,
+      // JSX in Monaco uses the standard `typescript` language; richer
+      // coloring (intrinsic vs. component tags, parameters, types) comes
+      // from the TS worker's semantic-token provider, which is off by
+      // default. Pair with bracket-pair colorization so deeply nested
+      // JSX is easier to scan.
+      'semanticHighlighting.enabled': true,
+      bracketPairColorization: { enabled: true },
       ...props.options,
     });
     editorRef.current = editor;
@@ -239,20 +354,36 @@ export function MonacoReplEditor(props: MonacoReplEditorProps): React.ReactEleme
   // synced separately below to preserve cursor/selection.
   useEffect(() => {
     if (!props.files) return;
+    let nonActiveChanged = false;
     for (const [path, content] of Object.entries(props.files)) {
       let model = modelsRef.current.get(path);
       if (!model) {
         const uri = monaco.Uri.parse(`file:///workspace/${path}`);
-        model = monaco.editor.createModel(content, languageForPath(path), uri);
+        model = monaco.editor.createModel(
+          content,
+          resolveLanguage(path, languageForRef.current),
+          uri,
+        );
         modelsRef.current.set(path, model);
       } else if (path !== props.path && model.getValue() !== content) {
         model.setValue(content);
+        nonActiveChanged = true;
       }
     }
     for (const [path, model] of modelsRef.current) {
       if (!(path in props.files) && path !== props.path) {
         model.dispose();
         modelsRef.current.delete(path);
+        nonActiveChanged = true;
+      }
+    }
+
+    if (nonActiveChanged) {
+      const activeModel = modelsRef.current.get(props.path);
+      const lang = activeModel?.getLanguageId();
+      if (activeModel && (lang === 'typescript' || lang === 'javascript')) {
+        const myGen = ++refreshGenRef.current;
+        void refreshActiveDiagnostics(activeModel, () => myGen === refreshGenRef.current);
       }
     }
   }, [props.files, props.path]);
@@ -270,7 +401,11 @@ export function MonacoReplEditor(props: MonacoReplEditorProps): React.ReactEleme
       // Without `file:`, `import 'date-fns'` resolves to nothing; the nested
       // dir avoids root-path collisions with Monaco's own lib models.
       const uri = monaco.Uri.parse(`file:///workspace/${props.path}`);
-      model = monaco.editor.createModel(props.value, languageForPath(props.path), uri);
+      model = monaco.editor.createModel(
+        props.value,
+        resolveLanguage(props.path, languageForRef.current),
+        uri,
+      );
       modelsRef.current.set(props.path, model);
     }
 

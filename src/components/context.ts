@@ -15,7 +15,7 @@
  */
 
 import { createContext } from 'react';
-import type { Files, VendorBundle, ReplError } from '../types.ts';
+import type { Files, VendorBundle, ReplError, ReplLoader } from '../types.ts';
 
 export type ReplStateContextValue = {
   /** Current file table (mirrors the consumer's `files` prop). */
@@ -33,6 +33,8 @@ export type ReplActionsContextValue = {
   vendor: VendorBundle;
   /** swc-wasm URL override (snapshotted on first mount). */
   swcWasmUrl: string | undefined;
+  /** Optional file pre-processor (snapshotted on first mount). */
+  loader: ReplLoader | undefined;
 
   setActivePath: (path: string) => void;
   setFile: (path: string, source: string) => void;

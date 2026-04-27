@@ -16,8 +16,9 @@
  */
 
 import { initLexer, rewriteImports, ResolveError } from './import-rewriter.ts';
-import { isCodeFile, isCssFile } from './path-utils.ts';
+import { defaultLoader } from './default-loader.ts';
 import type { ModulePayload } from '../runtime/protocol.ts';
+import type { ReplLoader, ReplTransform } from '../types.ts';
 
 const DEFAULT_SWC_WASM_URL = 'https://cdn.jsdelivr.net/npm/@swc/wasm-web@1.15.30/wasm_bg.wasm';
 
@@ -45,6 +46,15 @@ export type TransformClientOptions = {
   onCssRemove: (path: string) => void;
   /** Called when a transform or resolve fails. */
   onError: (err: TransformError) => void;
+  /**
+   * Per-file pre-processor. Defaults to {@link defaultLoader} (which
+   * implements `.css` → `<style>`, `.tsx`/`.ts`/`.jsx`/`.js` → swc,
+   * everything else → ignored).
+   *
+   * A custom loader fully replaces the default; delegate to `defaultLoader`
+   * for files you don't want to handle.
+   */
+  loader?: ReplLoader;
 };
 
 /** A resettable, debounced transform driver. */
@@ -60,6 +70,12 @@ export class TransformClient {
   private latestSource = new Map<string, string>();
   private files: Record<string, string> = {};
   private disposed = false;
+  /**
+   * Paths currently injected as CSS in the iframe. We track this so removals
+   * can pick the right teardown branch — built-in `.css` files and loader-
+   * produced CSS look the same from `handleRemoval`'s perspective.
+   */
+  private cssPaths = new Set<string>();
 
   constructor(private readonly opts: TransformClientOptions) {}
 
@@ -87,33 +103,29 @@ export class TransformClient {
     const prev = this.files;
     this.files = next;
 
-    let codeFileRemoved = false;
+    let moduleRemoved = false;
     for (const path of Object.keys(prev)) {
       if (!(path in next)) {
-        if (isCodeFile(path)) codeFileRemoved = true;
+        // Anything that wasn't injected as CSS could have been a module;
+        // assume dependents need re-resolution.
+        if (!this.cssPaths.has(path)) moduleRemoved = true;
         this.handleRemoval(path);
       }
     }
 
+    // Every file flows through the loader (default or custom) — the loader
+    // decides what to actually do (compile, inject as CSS, or skip).
     for (const path of Object.keys(next)) {
       const newSource = next[path]!;
       if (prev[path] === newSource) continue;
-      if (isCssFile(path)) {
-        this.opts.onCssUpsert(path, newSource);
-        continue;
-      }
-      if (!isCodeFile(path)) continue;
       this.scheduleTransform(path, newSource);
     }
 
-    // When a code file is removed, dependents may have stale imports
-    // pointing at it. Re-transform every other code file so that
-    // rewriteImports sees the new state and surfaces ResolveError for
-    // any module still referencing the removed path. (For typical
-    // REPL-sized projects this is a cheap pass.)
-    if (codeFileRemoved) {
+    // When a module is removed, dependents may have stale imports pointing
+    // at it. Re-transform every other file so rewriteImports sees the new
+    // state and surfaces ResolveError for any reference to the removed path.
+    if (moduleRemoved) {
       for (const path of Object.keys(next)) {
-        if (!isCodeFile(path)) continue;
         this.scheduleTransform(path, next[path]!);
       }
     }
@@ -129,41 +141,46 @@ export class TransformClient {
     if (this.disposed) return;
     await this.ensureWorker();
     await initLexer();
-    const codeFiles = Object.entries(this.files).filter(([p]) => isCodeFile(p));
+    const loader = this.opts.loader ?? defaultLoader;
 
-    // 1. transform every file in parallel (independent work).
-    const transformed = await Promise.all(
-      codeFiles.map(async ([path, source]) => {
+    // 1. run the loader on every file in parallel. CSS is upserted right
+    //    away; modules collect for the dep-graph + topo-emit pass.
+    const mods: { path: string; code: string }[] = [];
+    await Promise.all(
+      Object.entries(this.files).map(async ([path, source]) => {
         try {
-          const code = await this.runTransform(path, source);
-          return { path, code, ok: true as const };
+          const result = await loader({ path, source, transform: this.boundTransform(path) });
+          if (!result) return;
+          if (result.kind === 'css') {
+            this.upsertCss(path, result.source);
+            return;
+          }
+          mods.push({ path, code: result.code });
         } catch (err) {
           this.reportError(err, path);
-          return { path, ok: false as const, code: '' };
         }
       }),
     );
-    const byPath = new Map(transformed.map((t) => [t.path, t]));
+    const byPath = new Map(mods.map((m) => [m.path, m]));
 
-    // 2. discover dep graph from each transformed body.
+    // 2. discover dep graph from each module body.
     const lexer = await import('es-module-lexer');
     const depGraph = new Map<string, string[]>();
-    for (const t of transformed) {
-      if (!t.ok) continue;
+    for (const m of mods) {
       try {
-        const [specs] = lexer.parse(t.code);
+        const [specs] = lexer.parse(m.code);
         const deps: string[] = [];
         for (const s of specs) {
-          const raw = s.n ?? (s.s >= 0 ? t.code.slice(s.s, s.e) : '');
+          const raw = s.n ?? (s.s >= 0 ? m.code.slice(s.s, s.e) : '');
           const name = raw.replace(/^['"]|['"]$/g, '');
           if (name.startsWith('./') || name.startsWith('/')) {
             const tgt = resolveLogical(name, this.files);
             if (tgt) deps.push(tgt);
           }
         }
-        depGraph.set(t.path, deps);
+        depGraph.set(m.path, deps);
       } catch {
-        depGraph.set(t.path, []);
+        depGraph.set(m.path, []);
       }
     }
 
@@ -172,10 +189,10 @@ export class TransformClient {
 
     // 4. emit in topo order.
     for (const path of order) {
-      const t = byPath.get(path);
-      if (!t || !t.ok) continue;
+      const m = byPath.get(path);
+      if (!m) continue;
       try {
-        const rewritten = rewriteImports(path, t.code, this.files);
+        const rewritten = rewriteImports(path, m.code, this.files);
         this.opts.onModule({
           path,
           code: rewritten.code,
@@ -184,11 +201,6 @@ export class TransformClient {
       } catch (err) {
         this.reportError(err, path);
       }
-    }
-
-    // 5. CSS upserts on cold boot.
-    for (const [path, source] of Object.entries(this.files)) {
-      if (isCssFile(path)) this.opts.onCssUpsert(path, source);
     }
   }
 
@@ -210,9 +222,15 @@ export class TransformClient {
     if (source === undefined) return;
     try {
       await this.ensureWorker();
+      const loader = this.opts.loader ?? defaultLoader;
+      const result = await loader({ path, source, transform: this.boundTransform(path) });
+      if (!result) return;
+      if (result.kind === 'css') {
+        this.upsertCss(path, result.source);
+        return;
+      }
       await initLexer();
-      const code = await this.runTransform(path, source);
-      const rewritten = rewriteImports(path, code, this.files);
+      const rewritten = rewriteImports(path, result.code, this.files);
       this.opts.onModule({
         path,
         code: rewritten.code,
@@ -221,6 +239,21 @@ export class TransformClient {
     } catch (err) {
       this.reportError(err, path);
     }
+  }
+
+  /** A {@link ReplTransform} bound to one file's path (for source map filename). */
+  private boundTransform(path: string): ReplTransform {
+    return (src, opts) => this.runTransform(path, src, opts?.tsx);
+  }
+
+  private upsertCss(path: string, css: string): void {
+    this.cssPaths.add(path);
+    this.opts.onCssUpsert(path, css);
+  }
+
+  private removeCss(path: string): void {
+    this.cssPaths.delete(path);
+    this.opts.onCssRemove(path);
   }
 
   private reportError(err: unknown, path: string): void {
@@ -250,8 +283,8 @@ export class TransformClient {
   }
 
   private handleRemoval(path: string): void {
-    if (isCssFile(path)) {
-      this.opts.onCssRemove(path);
+    if (this.cssPaths.has(path)) {
+      this.removeCss(path);
       return;
     }
     this.latestSource.delete(path);
@@ -305,7 +338,7 @@ export class TransformClient {
     return new URL('./worker.js', import.meta.url);
   }
 
-  private runTransform(path: string, source: string): Promise<string> {
+  private runTransform(path: string, source: string, tsx?: boolean): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       if (!this.worker) {
         reject(new Error('worker not started'));
@@ -313,7 +346,13 @@ export class TransformClient {
       }
       const id = ++this.requestId;
       this.pending.set(id, { path, resolve, reject });
-      this.worker.postMessage({ kind: 'transform', id, path, source });
+      this.worker.postMessage({
+        kind: 'transform',
+        id,
+        path,
+        source,
+        ...(tsx !== undefined ? { tsx } : {}),
+      });
     });
   }
 
