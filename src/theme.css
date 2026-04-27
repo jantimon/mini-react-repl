@@ -1,0 +1,209 @@
+/*
+ * Optional default theme for mini-react-repl. Import to get sane defaults:
+ *
+ *   import 'mini-react-repl/theme.css'
+ *
+ * All selectors target stable class names + data attributes. Override any
+ * of them in your own CSS — no specificity wars; we use a single class.
+ */
+
+.repl-root {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(280px, 1fr);
+  gap: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 480px;
+  background: var(--repl-bg, #0e0f12);
+  color: var(--repl-fg, #e6e7ea);
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  font-size: 14px;
+}
+
+.repl-root__main,
+.repl-root__side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.repl-root__main {
+  border-right: 1px solid var(--repl-border, #22242a);
+}
+
+/* Tabs */
+
+.repl-tabs {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--repl-border, #22242a);
+  background: var(--repl-tabs-bg, #15161a);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.repl-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--repl-border, #22242a);
+  color: var(--repl-tab-fg, #aab);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.repl-tab[data-active='true'] {
+  background: var(--repl-tab-active-bg, #0e0f12);
+  color: var(--repl-tab-active-fg, #fff);
+  box-shadow: inset 0 -2px 0 var(--repl-accent, #79b8ff);
+}
+
+.repl-tab:hover:not([data-active='true']) {
+  background: var(--repl-tab-hover-bg, #1a1c20);
+  color: var(--repl-fg, #e6e7ea);
+}
+
+.repl-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--repl-tab-fg, #889);
+  cursor: pointer;
+}
+
+.repl-tab-close:hover {
+  background: var(--repl-tab-close-hover, #2a2d33);
+  color: #fff;
+}
+
+.repl-tab-add {
+  padding: 0 12px;
+  background: transparent;
+  border: none;
+  color: var(--repl-tab-fg, #889);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.repl-tab-add:hover {
+  color: var(--repl-fg, #fff);
+  background: var(--repl-tab-hover-bg, #1a1c20);
+}
+
+/* Editor */
+
+.repl-editor {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+}
+
+.repl-editor > * {
+  width: 100%;
+  height: 100%;
+}
+
+/* Preview */
+
+.repl-preview {
+  flex: 1;
+  min-height: 0;
+  background: var(--repl-preview-bg, #fff);
+  position: relative;
+}
+
+.repl-iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+}
+
+/* Standalone error overlay (used by <ReplErrorOverlay/>) */
+
+.repl-error-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(20, 20, 24, 0.92);
+  color: #ffd5d5;
+  font:
+    13px/1.5 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  padding: 20px 22px;
+  overflow: auto;
+  z-index: 10;
+}
+
+.repl-error-overlay__title {
+  color: #ff8a8a;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+.repl-error-overlay__path {
+  color: #889;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.repl-error-overlay__message {
+  color: #fff;
+  white-space: pre-wrap;
+}
+
+.repl-error-overlay__loc {
+  color: #ffb37a;
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.repl-error-overlay__stack {
+  margin-top: 12px;
+  color: #99a;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+/* Light-mode override */
+
+@media (prefers-color-scheme: light) {
+  .repl-root {
+    background: #fafafa;
+    color: #111;
+    --repl-bg: #fafafa;
+    --repl-fg: #111;
+    --repl-border: #e2e3e7;
+    --repl-tabs-bg: #f3f4f6;
+    --repl-tab-fg: #4b5563;
+    --repl-tab-active-bg: #fff;
+    --repl-tab-active-fg: #111;
+    --repl-tab-hover-bg: #eaecef;
+    --repl-tab-close-hover: #d8dade;
+    --repl-accent: #2563eb;
+    --repl-preview-bg: #fff;
+  }
+}

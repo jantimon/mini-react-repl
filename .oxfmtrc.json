@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "ignorePatterns": [
+    "dist",
+    "node_modules",
+    "examples/demo/dist",
+    "test-results",
+    "playwright-report",
+    "src/runtime/runtime.bundled.ts",
+    "src/vendor-default/data.ts"
+  ],
+  "semi": true,
+  "singleQuote": true,
+  "printWidth": 100,
+  "trailingComma": "all",
+  "arrowParens": "always",
+  "endOfLine": "lf",
+  "tabWidth": 2
+}
