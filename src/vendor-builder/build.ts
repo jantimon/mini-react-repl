@@ -43,6 +43,26 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import type { ImportMap, TypeBundle, VendorBundle } from '../types.ts';
 
+/**
+ * Specifiers the iframe runtime hard-imports through the import map. They
+ * must always be in the produced vendor or the preview never boots:
+ *
+ * - `react`, `react-dom/client`, `react-refresh/runtime` — imported by the
+ *   in-iframe runtime and preamble (see `src/runtime/preamble.ts`,
+ *   `src/runtime/runtime.ts`).
+ * - `react-dom` — pulled in transitively by `react-dom/client`'s bundle.
+ * - `react/jsx-runtime` and `react/jsx-dev-runtime` — every JSX file the
+ *   SWC transform produces imports one of them.
+ */
+const REQUIRED_CORE = [
+  'react',
+  'react-dom',
+  'react-dom/client',
+  'react/jsx-runtime',
+  'react/jsx-dev-runtime',
+  'react-refresh/runtime',
+] as const;
+
 export type BuildOptions = {
   /**
    * Bare specifiers to bundle. Can include subpaths (`'react-dom/client'`,
@@ -79,6 +99,44 @@ export type BuildOptions = {
    * @defaultValue `'omit'`
    */
   types?: 'embed' | 'omit';
+  /**
+   * Specifiers that should NOT be bundled into other packages — they resolve
+   * at runtime via the import map. Each entry must also appear in `packages`
+   * (or be auto-included via {@link includeRequiredCore}).
+   *
+   * When omitted, the effective external set is `packages` PLUS the
+   * auto-included required core. That's the default users almost always
+   * want: bundling `react,react-dom,recharts` in one go produces three
+   * modules that share a single React copy at runtime, not three private
+   * React copies — and the auto-included `react`, `react-dom/client`, etc.
+   * are externalized for the same reason.
+   *
+   * Subpaths of the same physical package (e.g. `react-dom` and
+   * `react-dom/client`) are never cross-externalized regardless: their
+   * shared internal state must stay co-located in one bundle.
+   */
+  external?: string[];
+  /**
+   * Whether to auto-include the core specifiers the iframe runtime requires
+   * (`react`, `react-dom`, `react-dom/client`, `react/jsx-runtime`,
+   * `react/jsx-dev-runtime`, `react-refresh/runtime`). Missing entries are
+   * prepended to `packages` and bundled with the same external rules.
+   *
+   * Set to `false` only if you're slotting these in from a different vendor.
+   *
+   * @defaultValue `true`
+   */
+  includeRequiredCore?: boolean;
+  /**
+   * Override the specifier list used for `.d.ts` collection when
+   * `types: 'embed'`. Defaults to the same list as `packages` (after
+   * required-core auto-include).
+   *
+   * Useful when an entry has no public-facing types you care about — e.g.
+   * `react-refresh/runtime` is consumed only by the iframe runtime, never
+   * by user code.
+   */
+  typesPackages?: string[];
 };
 
 /** Build a vendor bundle. Returns the {@link VendorBundle} the consumer passes to `<Repl/>`. */
@@ -87,22 +145,26 @@ export async function build(options: BuildOptions): Promise<VendorBundle> {
   const nodeEnv = options.nodeEnv ?? 'development';
   const cwd = options.cwd ?? process.cwd();
   const wantTypes = options.types === 'embed';
+  const includeCore = options.includeRequiredCore ?? true;
 
   if (options.format === 'hosted' && !options.outDir) {
     throw new Error("build({ format: 'hosted' }) requires outDir");
   }
 
+  const packages = withRequiredCore(options.packages, includeCore);
+  const externals = options.external ?? packages;
+
   const importMap: ImportMap = { imports: {} };
   const types: TypeBundle | undefined = wantTypes
-    ? await collectTypes(options.packages, cwd)
+    ? await collectTypes(options.typesPackages ?? packages, cwd)
     : undefined;
 
   if (options.format === 'hosted') {
     const outDir = resolve(cwd, options.outDir!);
     await mkdir(outDir, { recursive: true });
 
-    for (const pkg of options.packages) {
-      const code = await bundlePackage(pkg, nodeEnv, cwd);
+    for (const pkg of packages) {
+      const code = await bundlePackage(pkg, externalsFor(pkg, externals), nodeEnv, cwd);
       const safe = pkg.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '');
       const hash = shortHash(code);
       const filename = `${safe}.${hash}.js`;
@@ -116,12 +178,53 @@ export async function build(options: BuildOptions): Promise<VendorBundle> {
   }
 
   // inline
-  for (const pkg of options.packages) {
-    const code = await bundlePackage(pkg, nodeEnv, cwd);
+  for (const pkg of packages) {
+    const code = await bundlePackage(pkg, externalsFor(pkg, externals), nodeEnv, cwd);
     const dataUrl = toDataUrl(code);
     importMap.imports[pkg] = dataUrl;
   }
   return types ? { importMap, types } : { importMap };
+}
+
+function withRequiredCore(packages: string[], include: boolean): string[] {
+  const seen = new Set(packages);
+  if (!include) return [...seen];
+  const missing = REQUIRED_CORE.filter((s) => !seen.has(s));
+  return [...missing, ...packages];
+}
+
+/**
+ * Auto-derive externals for `specifier` from `all`. Excludes the specifier
+ * itself, plus any other listed entry that's a subpath of the same physical
+ * package — e.g. when bundling `react-dom/client`, never externalize
+ * `react-dom`. Subpaths of the same package share internal state via
+ * package-relative imports; splitting them across module records breaks the
+ * createRoot machinery.
+ *
+ * Exception: `react` is always externalized when listed, even from its own
+ * subpaths. It is the canonical shared singleton of the ecosystem — every
+ * jsx-runtime, react-dom, third-party hook library MUST see the same React
+ * instance, or hook calls cross instance boundaries and React throws
+ * "Invalid hook call". `react/jsx-runtime`'s body only consumes React's
+ * stable public API (createElement), not its internal state, so sharing
+ * is safe.
+ */
+function externalsFor(specifier: string, all: string[]): string[] {
+  const pkg = packageOf(specifier);
+  return all.filter((s) => {
+    if (s === specifier) return false;
+    if (packageOf(s) === pkg) return s === 'react';
+    return true;
+  });
+}
+
+function packageOf(specifier: string): string {
+  if (specifier.startsWith('@')) {
+    const parts = specifier.split('/');
+    return parts.length >= 2 ? parts.slice(0, 2).join('/') : specifier;
+  }
+  const slash = specifier.indexOf('/');
+  return slash === -1 ? specifier : specifier.slice(0, slash);
 }
 
 /**
@@ -148,14 +251,38 @@ async function loadEsbuild(): Promise<typeof import('esbuild')> {
 
 async function bundlePackage(
   specifier: string,
+  candidateExternals: string[],
   nodeEnv: 'development' | 'production',
   cwd: string,
 ): Promise<string> {
   const esbuild = await loadEsbuild();
+
+  // esbuild's `export * from "<cjs>"` with `format: 'esm'` emits a runtime
+  // `__reExport(__toESM(...))` shim with no static `export const` lines, so
+  // named imports against the bundle resolve to undefined. Instead, discover
+  // the actual export names via Node and emit explicit per-name re-exports;
+  // those esbuild surfaces statically.
+  const { names, hasDefault } = await discoverExports(specifier, cwd);
+  const lines = [
+    `import * as __M from ${JSON.stringify(specifier)};`,
+    ...names.map((n) => `export const ${n} = __M[${JSON.stringify(n)}];`),
+  ];
+  if (hasDefault && shouldReexportDefault(specifier)) {
+    lines.push(`export default __M.default;`);
+  }
+  const entry = lines.join('\n') + '\n';
+
+  // Marking a package as external when the bundled body never references it
+  // is not a no-op: each banner `import * as __ext_N from "X"` forces the
+  // browser to evaluate X's bundle as a side effect of loading this one.
+  // For packages without any cross-package deps (e.g. react-refresh/runtime),
+  // that drags in modules whose initialization order matters — notably
+  // breaks the preamble → injectIntoGlobalHook → React init sequence.
+  // So: probe with the full candidate set, then keep only the externals the
+  // body actually references.
   const result = await esbuild.build({
     stdin: {
-      contents: `export * from ${JSON.stringify(specifier)};
-${needsDefaultReexport(specifier) ? `export { default } from ${JSON.stringify(specifier)};` : ''}`,
+      contents: entry,
       resolveDir: cwd,
       loader: 'ts',
     },
@@ -165,30 +292,157 @@ ${needsDefaultReexport(specifier) ? `export { default } from ${JSON.stringify(sp
     platform: 'browser',
     write: false,
     minify: false,
+    metafile: true,
     define: {
       'process.env.NODE_ENV': JSON.stringify(nodeEnv),
     },
     legalComments: 'none',
     logLevel: 'silent',
+    // esbuild's built-in `external` matches subpaths too — externalizing
+    // `react` would also externalize `react/jsx-runtime` from inside its own
+    // bundle and create a self-import. Use a plugin for exact matches only.
+    plugins:
+      candidateExternals.length > 0
+        ? [
+            {
+              name: 'exact-external',
+              setup(b) {
+                const set = new Set(candidateExternals);
+                b.onResolve({ filter: /.*/ }, (args) => {
+                  if (set.has(args.path)) return { path: args.path, external: true };
+                  return null;
+                });
+              },
+            },
+          ]
+        : [],
   });
   const output = result.outputFiles?.[0]?.text;
   if (!output) throw new Error(`esbuild produced no output for '${specifier}'`);
-  return output;
+
+  const referenced = referencedExternals(result.metafile, candidateExternals);
+  return prependBanner(output, referenced);
 }
 
 /**
- * Whether to add `export { default } from '<specifier>'`. Some packages don't
- * have a default export, in which case esbuild errors. We add the re-export
- * by default; for packages without one, the consumer can pre-process the list.
+ * Inspect esbuild's metafile to find which of `candidates` were actually
+ * imported (and therefore externalized) by the produced bundle.
  */
-function needsDefaultReexport(specifier: string): boolean {
-  // react, react-dom, lodash-es, date-fns ship default exports we want to
-  // surface. for jsx-runtime / dev-runtime there is no default and re-exporting
-  // would error.
+function referencedExternals(
+  metafile: import('esbuild').Metafile | undefined,
+  candidates: string[],
+): string[] {
+  if (!metafile) return [];
+  const outputs = Object.values(metafile.outputs);
+  if (outputs.length === 0) return [];
+  const candidateSet = new Set(candidates);
+  const seen = new Set<string>();
+  for (const out of outputs) {
+    for (const imp of out.imports) {
+      if (imp.external && candidateSet.has(imp.path)) seen.add(imp.path);
+    }
+  }
+  return candidates.filter((c) => seen.has(c));
+}
+
+/**
+ * Banner with one ESM namespace import per actually-referenced external,
+ * plus a `globalThis.require` shim for esbuild's CJS-to-ESM interop:
+ * esbuild emits `__require("react")` for nested `require()` calls into
+ * externalized packages, and the browser has no `require`.
+ */
+function prependBanner(output: string, external: string[]): string {
+  if (external.length === 0) return output;
+  const banner =
+    external.map((ext, i) => `import * as __ext_${i} from ${JSON.stringify(ext)};`).join('\n') +
+    '\n' +
+    `if (typeof globalThis.require === 'undefined') globalThis.require = function(id){\n` +
+    external
+      .map(
+        (ext, i) => `  if (id === ${JSON.stringify(ext)}) return __ext_${i}.default ?? __ext_${i};`,
+      )
+      .join('\n') +
+    `\n  throw new Error('Cannot require: ' + id);\n};\n`;
+  return banner + output;
+}
+
+/**
+ * jsx-runtime / jsx-dev-runtime: even though Node's CJS-to-ESM interop
+ * gives them a `default` (the full module.exports namespace), re-exporting
+ * it as default would let `import jsx from 'react/jsx-runtime'` succeed
+ * with the namespace — confusing and not a documented API.
+ */
+function shouldReexportDefault(specifier: string): boolean {
   if (specifier.endsWith('/jsx-runtime') || specifier.endsWith('/jsx-dev-runtime')) {
     return false;
   }
   return true;
+}
+
+/**
+ * Resolve `specifier` from `cwd` and inspect its export shape. Returns the
+ * list of named exports (filtered to valid JS identifiers — keys that
+ * couldn't appear in `export const X`) and whether the module has a real
+ * `default` export.
+ */
+async function discoverExports(
+  specifier: string,
+  cwd: string,
+): Promise<{ names: string[]; hasDefault: boolean }> {
+  const anchor = pathToFileURL(join(cwd, '__entry__.js')).href;
+  const resolved = createRequire(anchor).resolve(specifier);
+  const mod = (await import(pathToFileURL(resolved).href)) as Record<string, unknown>;
+  const keys = Object.keys(mod);
+  return {
+    names: keys.filter((k) => k !== 'default' && isValidExportName(k)),
+    hasDefault: keys.includes('default'),
+  };
+}
+
+const RESERVED = new Set([
+  'break',
+  'case',
+  'catch',
+  'class',
+  'const',
+  'continue',
+  'debugger',
+  'default',
+  'delete',
+  'do',
+  'else',
+  'enum',
+  'export',
+  'extends',
+  'false',
+  'finally',
+  'for',
+  'function',
+  'if',
+  'import',
+  'in',
+  'instanceof',
+  'let',
+  'new',
+  'null',
+  'return',
+  'super',
+  'switch',
+  'this',
+  'throw',
+  'true',
+  'try',
+  'typeof',
+  'var',
+  'void',
+  'while',
+  'with',
+  'yield',
+]);
+
+function isValidExportName(name: string): boolean {
+  if (RESERVED.has(name)) return false;
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name);
 }
 
 function toDataUrl(code: string): string {

@@ -249,7 +249,15 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
 
   return (
     <div className={`repl-preview ${props.className ?? ''}`} style={props.style}>
-      <iframe ref={setupIframe} className="repl-iframe" srcDoc={srcdoc} title="preview" />
+      <iframe
+        ref={setupIframe}
+        className="repl-iframe"
+        srcDoc={srcdoc}
+        title="preview"
+        // Inline so the iframe fills its container and drops the default
+        // 2px inset border even when consumers don't import theme.css.
+        style={{ width: '100%', height: '100%', border: 0, display: 'block' }}
+      />
     </div>
   );
 }

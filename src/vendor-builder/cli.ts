@@ -24,6 +24,8 @@ type Args = {
   nodeEnv: 'development' | 'production';
   importMapOut: string | undefined;
   types: 'embed' | 'omit';
+  external: string[] | undefined;
+  includeRequiredCore: boolean;
 };
 
 function parseArgs(argv: string[]): Args {
@@ -31,6 +33,7 @@ function parseArgs(argv: string[]): Args {
     format: 'hosted',
     nodeEnv: 'development',
     types: 'omit',
+    includeRequiredCore: true,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -59,6 +62,13 @@ function parseArgs(argv: string[]): Args {
         throw new Error(`--types must be 'embed' or 'omit' (got '${v}')`);
       }
       args.types = v;
+    } else if (a === '--external') {
+      args.external = (argv[++i] ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    } else if (a === '--no-auto-core') {
+      args.includeRequiredCore = false;
     } else if (a === '--help' || a === '-h') {
       printHelp();
       process.exit(0);
@@ -90,6 +100,16 @@ Options:
       --types <mode>        'embed' or 'omit' (default). When 'embed', also
                             collect .d.ts for each package and emit them
                             as vendor.types (and types.json for hosted)
+      --external <list>     comma-separated specifiers that should NOT be
+                            bundled into others. Defaults to every entry in
+                            --packages PLUS the auto-included core, so all
+                            listed packages share a single React copy at
+                            runtime via the import map.
+      --no-auto-core        don't auto-include the iframe-required core
+                            (react, react-dom, react-dom/client,
+                            react/jsx-runtime, react/jsx-dev-runtime,
+                            react-refresh/runtime). Use only when serving
+                            them from a different vendor.
       --import-map-out <p>  also write the import map JSON to this path
   -h, --help                show this help
 
@@ -128,6 +148,8 @@ async function main(): Promise<void> {
     ...(args.baseUrl ? { baseUrl: args.baseUrl } : {}),
     nodeEnv: args.nodeEnv,
     types: args.types,
+    ...(args.external ? { external: args.external } : {}),
+    includeRequiredCore: args.includeRequiredCore,
   });
 
   const json = JSON.stringify(result.importMap, null, 2);

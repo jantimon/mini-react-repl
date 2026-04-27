@@ -1,6 +1,6 @@
 {
   "name": "mini-react-repl",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Browser-only React TSX REPL — multi-file editor, live preview, real Fast Refresh, no backend.",
   "keywords": [
     "fast-refresh",
