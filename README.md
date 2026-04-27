@@ -1,7 +1,9 @@
 # mini-react-repl
 
 A multi-file React + TSX REPL that runs entirely in the browser. Edit, see the
-result live, ship the whole thing as static files.
+result live, ship the whole thing as static files
+
+![preview](https://github.com/user-attachments/assets/923e87c3-9499-48ee-95b1-c946ad38f714)
 
 ```sh
 npm i mini-react-repl monaco-editor react react-dom
