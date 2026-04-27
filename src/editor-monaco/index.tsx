@@ -4,9 +4,14 @@
  * Imported from a separate subpath so consumers that bring their own editor
  * never pay for Monaco. `monaco-editor` is an optional peer dependency.
  *
- * Worker setup is the consumer's responsibility — this module assumes
- * `self.MonacoEnvironment.getWorker` is configured before mount, which is
- * what `vite-plugin-monaco-editor` and `monaco-editor-webpack-plugin` do.
+ * **Worker setup is automatic.** This module assigns `self.MonacoEnvironment`
+ * with a `getWorker` that spawns Monaco's TS / CSS / editor workers via
+ * `new Worker(new URL('monaco-editor/...', import.meta.url), { type: 'module' })`.
+ * Vite, webpack 5, Rspack, and Parcel 2 all statically analyze that pattern
+ * and emit the workers as separate chunks — no plugin or setup file needed.
+ *
+ * **Opt out** by assigning `self.MonacoEnvironment` *before* importing this
+ * module; the auto-setup is guarded and will not overwrite an existing value.
  *
  * The adapter configures Monaco's TypeScript service on mount with compiler
  * options matching the runtime transform (automatic JSX, ES2022, bundler
@@ -28,6 +33,32 @@
 import { useEffect, useRef } from 'react';
 import * as monaco from 'monaco-editor';
 import type { ReplEditorProps, TypeBundle } from '../types.ts';
+
+// Module-scope so it runs exactly once on first import, before any editor
+// mounts. Guarded so consumers that wire their own workers (custom CDN paths,
+// classic-worker fallbacks, etc.) by setting MonacoEnvironment first win.
+if (typeof self !== 'undefined' && !self.MonacoEnvironment) {
+  self.MonacoEnvironment = {
+    getWorker(_workerId: string, label: string): Worker {
+      if (label === 'typescript' || label === 'javascript') {
+        return new Worker(
+          new URL('monaco-editor/esm/vs/language/typescript/ts.worker.js', import.meta.url),
+          { type: 'module' },
+        );
+      }
+      if (label === 'css' || label === 'scss' || label === 'less') {
+        return new Worker(
+          new URL('monaco-editor/esm/vs/language/css/css.worker.js', import.meta.url),
+          { type: 'module' },
+        );
+      }
+      return new Worker(
+        new URL('monaco-editor/esm/vs/editor/editor.worker.js', import.meta.url),
+        { type: 'module' },
+      );
+    },
+  };
+}
 
 export type MonacoReplEditorProps = ReplEditorProps & {
   /** Monaco theme. @defaultValue `'vs-dark'` if `prefers-color-scheme: dark`, else `'vs'` */
