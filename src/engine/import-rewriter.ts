@@ -17,6 +17,16 @@
 import { init, parse, type ImportSpecifier } from 'es-module-lexer';
 import { resolveRelative } from './path-utils.ts';
 
+/**
+ * Prefix used for the registry-key of virtual modules. Null-byte makes the
+ * key impossible to type by hand and ensures it can never collide with a
+ * user-supplied path. Exposed so the engine and runtime agree on shape;
+ * not part of the public API.
+ *
+ * @internal
+ */
+export const VIRTUAL_KEY_PREFIX = '\0virtual:';
+
 let lexerReady: Promise<void> | null = null;
 
 /**
@@ -60,11 +70,18 @@ export type RewriteResult = {
  * (quoted) specifier with the current blob URL of its target. By
  * normalizing here we guarantee a unique, predictable substring to
  * replace.
+ *
+ * Bare specifiers in `virtualAliases` are reported as deps too — same
+ * substitution model — so user code's `import '@foo/bar'` resolves to the
+ * iframe-minted blob URL of the virtual module (rather than going through
+ * the import map). The literal text in `code` is left untouched, exactly
+ * matching what `runtime.ts buildBlobUrl()` looks for when substituting.
  */
 export function rewriteImports(
   fromPath: string,
   code: string,
   files: Record<string, string>,
+  virtualAliases?: ReadonlySet<string>,
 ): RewriteResult {
   const [specifiers] = parse(code);
   const deps: { specifier: string; target: string }[] = [];
@@ -98,6 +115,9 @@ export function rewriteImports(
       const normalized = `./${target}`;
       deps.push({ specifier: normalized, target });
       out += isDynamic ? `'${normalized}'` : normalized;
+    } else if (virtualAliases?.has(name)) {
+      deps.push({ specifier: name, target: VIRTUAL_KEY_PREFIX + name });
+      out += isDynamic ? `'${name}'` : name;
     } else {
       bareSpecifiers.push(name);
       out += isDynamic ? `'${name}'` : name;

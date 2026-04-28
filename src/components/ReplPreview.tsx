@@ -91,6 +91,7 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
   const entry = actions.entry;
   const swcWasmUrl = actions.swcWasmUrl;
   const loader = actions.loader;
+  const virtualModulesRaw = actions.virtualModules;
 
   // React 19 callback ref with cleanup. When `srcdoc` (or any dep) changes,
   // React fires the previous ref's cleanup (disposes the client + listener)
@@ -170,6 +171,7 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
       const client = new TransformClient({
         ...(swcWasmUrl ? { swcWasmUrl } : {}),
         ...(loader ? { loader } : {}),
+        ...(Object.keys(virtualModulesRaw).length > 0 ? { virtualModules: virtualModulesRaw } : {}),
         onModule: (m) => {
           if (!booted) {
             collected.push(m);
@@ -238,7 +240,7 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
         detachUserRef?.();
       };
     },
-    [srcdoc, entry, swcWasmUrl, loader, setLastError],
+    [srcdoc, entry, swcWasmUrl, loader, virtualModulesRaw, setLastError],
   );
 
   // Forward file changes into the live transform client. Waits until the

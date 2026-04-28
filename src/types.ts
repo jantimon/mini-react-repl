@@ -83,6 +83,26 @@ export type ImportMap = {
  */
 export type Files = Record<string, string>;
 
+/**
+ * Inline modules exposed to the iframe under bare-specifier aliases.
+ *
+ * Each `key` is the import specifier user code may use (e.g. `'@app/util'`,
+ * `'@scope/pkg'`); each `value` is the TSX source. The library compiles them
+ * with the same swc pipeline as user files and the iframe runtime resolves
+ * `import { x } from '@app/util'` to the compiled module.
+ *
+ * Pair with {@link VendorBundle} for ad-hoc helpers you don't want to ship
+ * as a vendor chunk — small utilities, theming primitives, mock APIs.
+ *
+ * **Boot-time only.** Hoist to a top-level `as const` so the reference stays
+ * stable; the library snapshots the value on first mount and ignores later
+ * identity changes (with a dev-mode warning). Collisions with
+ * `vendor.importMap.imports` keys resolve in favor of the virtual.
+ *
+ * CSS aliases (`'theme.css'` and similar) are not yet supported.
+ */
+export type VirtualModules = Record<string, string>;
+
 /** Errors surfaced through `onPreviewError`. */
 export type ReplError =
   | {
@@ -125,6 +145,14 @@ export type ReplEditorProps = {
    * one file is open. Editors that don't need it ignore this.
    */
   files?: Files;
+  /**
+   * Inline virtual modules forwarded from the host's `virtualModules` prop.
+   * Editors with a TypeScript service register each entry as an extra lib so
+   * cross-file imports of `@foo/bar` (etc.) resolve to the source — giving
+   * autocomplete, hover signatures, and red squiggles. Editors that don't
+   * consume it ignore this.
+   */
+  virtualModules?: VirtualModules;
 };
 
 /** A component matching {@link ReplEditorProps}. */

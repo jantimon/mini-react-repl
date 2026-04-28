@@ -348,6 +348,28 @@ export function MonacoReplEditor(props: MonacoReplEditorProps): React.ReactEleme
     };
   }, [props.types]);
 
+  // Register virtual modules as extra libs at `file:///node_modules/<alias>`
+  // so Monaco's NodeJs module resolution finds them on bare-specifier import
+  // — same trick as `vendor.types`. Registering `.tsx` source via
+  // `addExtraLib` works: the TS service infers types from the exports.
+  // The alias is used verbatim in the path: `@scope/name` produces a
+  // two-segment subdirectory which matches how the TS resolver walks for
+  // scoped packages. Boot-time only by contract; the dep array exists for
+  // sanity, identity is expected to be stable.
+  useEffect(() => {
+    const virtuals = props.virtualModules;
+    if (!virtuals) return;
+    const acquired: string[] = [];
+    for (const [alias, source] of Object.entries(virtuals)) {
+      const uri = `file:///node_modules/${alias}/index.tsx`;
+      acquireLib(uri, source);
+      acquired.push(uri);
+    }
+    return () => {
+      for (const path of acquired) releaseLib(path);
+    };
+  }, [props.virtualModules]);
+
   // Sync ALL workspace files to Monaco models, not just the active one.
   // Without this, `import { X } from './Y'` reports `2307` (module not
   // found) until the user opens Y in a tab. Active file's content is

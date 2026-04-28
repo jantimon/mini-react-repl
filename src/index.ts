@@ -25,6 +25,7 @@ export { defaultLoader } from './engine/default-loader.ts';
 export type {
   Files,
   VendorBundle,
+  VirtualModules,
   ImportMap,
   ReplError,
   ReplEditorProps,

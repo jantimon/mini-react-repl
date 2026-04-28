@@ -36,5 +36,11 @@ export default defineConfig({
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
     },
+    {
+      command: 'pnpm --filter virtual-modules-example dev',
+      url: 'http://localhost:5175',
+      reuseExistingServer: !process.env.CI,
+      timeout: 60_000,
+    },
   ],
 });

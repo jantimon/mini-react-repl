@@ -15,7 +15,7 @@
  * @internal
  */
 
-import { initLexer, rewriteImports, ResolveError } from './import-rewriter.ts';
+import { initLexer, rewriteImports, ResolveError, VIRTUAL_KEY_PREFIX } from './import-rewriter.ts';
 import { defaultLoader } from './default-loader.ts';
 import type { ModulePayload } from '../runtime/protocol.ts';
 import type { ReplLoader, ReplTransform } from '../types.ts';
@@ -55,6 +55,17 @@ export type TransformClientOptions = {
    * for files you don't want to handle.
    */
   loader?: ReplLoader;
+  /**
+   * Inline virtual modules: `Record<alias, source>`. Each entry is compiled
+   * with swc (TSX) and emitted as a `ModulePayload` with a synthetic key
+   * (`VIRTUAL_KEY_PREFIX + alias`). User code that imports the alias gets
+   * the literal specifier substituted for the virtual's blob URL by the
+   * iframe runtime — same mechanism as relative imports.
+   *
+   * Snapshotted at construction time. Incremental edits (`syncFiles`) never
+   * touch virtuals.
+   */
+  virtualModules?: Record<string, string>;
 };
 
 /** A resettable, debounced transform driver. */
@@ -76,8 +87,18 @@ export class TransformClient {
    * produced CSS look the same from `handleRemoval`'s perspective.
    */
   private cssPaths = new Set<string>();
+  /**
+   * Virtual modules: alias → source. Snapshotted at construction. The alias
+   * set is the rewriter's signal that a bare specifier should be treated as
+   * a dep (substitution path) rather than passed through to the import map.
+   */
+  private readonly virtualSources: Record<string, string>;
+  private readonly virtualAliases: ReadonlySet<string>;
 
-  constructor(private readonly opts: TransformClientOptions) {}
+  constructor(private readonly opts: TransformClientOptions) {
+    this.virtualSources = opts.virtualModules ?? {};
+    this.virtualAliases = new Set(Object.keys(this.virtualSources));
+  }
 
   /**
    * Replace the files snapshot without scheduling any transforms.
@@ -143,9 +164,24 @@ export class TransformClient {
     await initLexer();
     const loader = this.opts.loader ?? defaultLoader;
 
-    // 1. run the loader on every file in parallel. CSS is upserted right
-    //    away; modules collect for the dep-graph + topo-emit pass.
+    // 1a. compile virtual modules. They bypass the user-supplied loader
+    //     (always TSX, always swc) and live under synthetic keys so they
+    //     never collide with user files.
     const mods: { path: string; code: string }[] = [];
+    await Promise.all(
+      Object.entries(this.virtualSources).map(async ([alias, source]) => {
+        const virtualKey = VIRTUAL_KEY_PREFIX + alias;
+        try {
+          const code = await this.runTransform(virtualKey, source, true);
+          mods.push({ path: virtualKey, code });
+        } catch (err) {
+          this.reportError(err, virtualKey);
+        }
+      }),
+    );
+
+    // 1b. run the loader on every user file in parallel. CSS is upserted
+    //     right away; modules collect for the dep-graph + topo-emit pass.
     await Promise.all(
       Object.entries(this.files).map(async ([path, source]) => {
         try {
@@ -163,7 +199,10 @@ export class TransformClient {
     );
     const byPath = new Map(mods.map((m) => [m.path, m]));
 
-    // 2. discover dep graph from each module body.
+    // 2. discover dep graph from each module body. Bare specifiers that
+    //    match a virtual alias produce a topo edge so virtuals are emitted
+    //    before any consumer — without this, `buildBlobUrl()` in the iframe
+    //    runtime can't substitute the alias for the virtual's blob URL.
     const lexer = await import('es-module-lexer');
     const depGraph = new Map<string, string[]>();
     for (const m of mods) {
@@ -176,6 +215,8 @@ export class TransformClient {
           if (name.startsWith('./') || name.startsWith('/')) {
             const tgt = resolveLogical(name, this.files);
             if (tgt) deps.push(tgt);
+          } else if (this.virtualAliases.has(name)) {
+            deps.push(VIRTUAL_KEY_PREFIX + name);
           }
         }
         depGraph.set(m.path, deps);
@@ -192,7 +233,7 @@ export class TransformClient {
       const m = byPath.get(path);
       if (!m) continue;
       try {
-        const rewritten = rewriteImports(path, m.code, this.files);
+        const rewritten = rewriteImports(path, m.code, this.files, this.virtualAliases);
         this.opts.onModule({
           path,
           code: rewritten.code,
@@ -230,7 +271,7 @@ export class TransformClient {
         return;
       }
       await initLexer();
-      const rewritten = rewriteImports(path, result.code, this.files);
+      const rewritten = rewriteImports(path, result.code, this.files, this.virtualAliases);
       this.opts.onModule({
         path,
         code: rewritten.code,

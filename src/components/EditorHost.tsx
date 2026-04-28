@@ -70,6 +70,8 @@ export function EditorHost(props: EditorHostProps): React.ReactElement | null {
   if (!path) return null;
   const value = state.files[path] ?? '';
   const Editor = props.editor;
+  const virtualModules = actions.virtualModules;
+  const hasVirtuals = Object.keys(virtualModules).length > 0;
   return (
     <div className={`repl-editor ${props.className ?? ''}`} style={props.style}>
       <Editor
@@ -79,6 +81,7 @@ export function EditorHost(props: EditorHostProps): React.ReactElement | null {
         onChange={onChange}
         files={state.files}
         {...(types ? { types } : {})}
+        {...(hasVirtuals ? { virtualModules } : {})}
       />
     </div>
   );

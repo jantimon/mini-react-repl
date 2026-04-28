@@ -19,7 +19,14 @@ import {
   type ReplActionsContextValue,
   type ReplStateContextValue,
 } from './context.ts';
-import type { Files, VendorBundle, ReplError, ReplLoader, TypeBundle } from '../types.ts';
+import type {
+  Files,
+  VendorBundle,
+  ReplError,
+  ReplLoader,
+  TypeBundle,
+  VirtualModules,
+} from '../types.ts';
 
 export type ReplProviderProps = {
   /** Source of truth for the file table. Required. */
@@ -65,10 +72,39 @@ export type ReplProviderProps = {
    * extension-based dispatch. **Boot-time only.** See {@link vendor}.
    */
   loader?: ReplLoader;
+  /**
+   * Inline virtual modules: map of import specifier (e.g. `'@app/util'`)
+   * to TSX source. User code can `import { x } from '@app/util'` and the
+   * iframe runtime executes the compiled source; Monaco autocompletes
+   * against it. No bundling, hosting, or import-map entry required.
+   *
+   * **Boot-time only.** See {@link vendor}. Hoist to a top-level `as const`
+   * so the reference stays stable; identity changes after mount fire a
+   * dev-warning and are ignored. Collisions with `vendor.importMap.imports`
+   * keys resolve in favor of the virtual. CSS aliases (`*.css`) are rejected
+   * with a `console.error` for now.
+   */
+  virtualModules?: VirtualModules;
   /** Initial selected file. Defaults to `entry`. */
   defaultActivePath?: string;
   children?: React.ReactNode;
 };
+
+function normalizeVirtualModules(input: VirtualModules): VirtualModules {
+  const raw: VirtualModules = {};
+  for (const [alias, source] of Object.entries(input)) {
+    if (alias.endsWith('.css')) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[mini-react-repl] virtualModules['${alias}']: CSS aliases are not yet supported. ` +
+          `Skipping. (Tracked for a future minor release.)`,
+      );
+      continue;
+    }
+    raw[alias] = source;
+  }
+  return raw;
+}
 
 function isThenable<T>(v: unknown): v is PromiseLike<T> {
   return v != null && typeof (v as { then?: unknown }).then === 'function';
@@ -158,6 +194,8 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
     vendor: props.vendor,
     swcWasmUrl: props.swcWasmUrl,
     loader: props.loader,
+    virtualModulesProp: props.virtualModules,
+    virtualModules: normalizeVirtualModules(props.virtualModules ?? {}),
   }));
 
   if (process.env.NODE_ENV !== 'production') {
@@ -175,7 +213,15 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
       if (props.vendor !== bootConfig.vendor) warn('vendor');
       if (props.swcWasmUrl !== bootConfig.swcWasmUrl) warn('swcWasmUrl');
       if (props.loader !== bootConfig.loader) warn('loader');
-    }, [props.entry, props.vendor, props.swcWasmUrl, props.loader, bootConfig]);
+      if (props.virtualModules !== bootConfig.virtualModulesProp) warn('virtualModules');
+    }, [
+      props.entry,
+      props.vendor,
+      props.swcWasmUrl,
+      props.loader,
+      props.virtualModules,
+      bootConfig,
+    ]);
   }
 
   const [activePath, setActivePath] = useState<string | null>(
@@ -223,6 +269,7 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
       vendor: bootConfig.vendor,
       swcWasmUrl: bootConfig.swcWasmUrl,
       loader: bootConfig.loader,
+      virtualModules: bootConfig.virtualModules,
       setActivePath,
       setFile,
       removeFile,

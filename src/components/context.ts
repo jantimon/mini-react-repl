@@ -15,7 +15,7 @@
  */
 
 import { createContext } from 'react';
-import type { Files, VendorBundle, ReplError, ReplLoader } from '../types.ts';
+import type { Files, VendorBundle, ReplError, ReplLoader, VirtualModules } from '../types.ts';
 
 export type ReplStateContextValue = {
   /** Current file table (mirrors the consumer's `files` prop). */
@@ -35,6 +35,14 @@ export type ReplActionsContextValue = {
   swcWasmUrl: string | undefined;
   /** Optional file pre-processor (snapshotted on first mount). */
   loader: ReplLoader | undefined;
+  /**
+   * Inline virtual modules (alias → source). Snapshotted on first mount.
+   * Always defined; defaults to `{}` when the consumer didn't pass any.
+   * Both the engine (`<ReplPreview/>`) and the editor (`<EditorHost/>`)
+   * consume this directly — the engine prefixes synthetic registry keys
+   * internally.
+   */
+  virtualModules: VirtualModules;
 
   setActivePath: (path: string) => void;
   setFile: (path: string, source: string) => void;

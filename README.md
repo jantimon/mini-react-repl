@@ -323,6 +323,32 @@ const vendor = {
 };
 ```
 
+### Virtual modules
+
+For ad-hoc helpers you don't want to ship as a vendor chunk — small
+utilities, theming primitives, mock APIs — pass them inline:
+
+```tsx
+const VIRTUAL_MODULES = {
+  '@app/util': `export const greet = (name: string) => 'hello ' + name`,
+} as const;
+
+<Repl files={files} virtualModules={VIRTUAL_MODULES} ... />
+```
+
+User code in the REPL can `import { greet } from '@app/util'` — the iframe
+runtime executes it; Monaco autocompletes against the source. No bundling,
+no hosting, no import-map entry. Virtuals can import each other and any
+vendor package (`react`, `date-fns`, …) — the iframe's existing dep
+substitution and the import map handle both.
+
+**Boot-time only.** Snapshotted on first mount, identical to `vendor`.
+Hoist to a top-level `as const` so the reference stays stable. Collisions
+with `vendor.importMap.imports` keys resolve in favor of the virtual.
+CSS aliases are not yet supported.
+
+See `examples/virtual-modules/` for a working setup with cross-virtual imports.
+
 ---
 
 ## Editor
