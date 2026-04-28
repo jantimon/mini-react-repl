@@ -91,9 +91,10 @@ mini-react-repl/                   # the OSS repo
 │  ├─ vendor-default/              # OPTIONAL default vendor (separate export)
 │  │  ├─ index.ts                  # exports { importMap, basePath }
 │  │  └─ assets/                   # react.js, react-dom.js, date-fns.js, etc.
+│  ├─ vendor-base.ts               # OPTIONAL re-exports of iframe-required core (separate export)
 │  ├─ vendor-builder/              # OPTIONAL CLI + programmatic API (separate export)
-│  │  ├─ cli.ts                    # `repl-vendor-build` bin
-│  │  └─ build.ts                  # programmatic build({ packages, outDir })
+│  │  ├─ cli.ts                    # `repl-vendor-build <entry.ts>` bin
+│  │  └─ build.ts                  # programmatic build({ entry, outDir })
 │  └─ theme.css                    # optional default styling
 ├─ examples/
 │  └─ demo/                        # Vite app proving the library works
@@ -118,6 +119,10 @@ mini-react-repl/                   # the OSS repo
     "./vendor-default": {
       "types": "./dist/vendor-default/index.d.ts",
       "import": "./dist/vendor-default/index.js",
+    },
+    "./vendor-base": {
+      "types": "./dist/vendor-base.d.ts",
+      "import": "./dist/vendor-base.js",
     },
     "./vendor-builder": {
       "types": "./dist/vendor-builder/build.d.ts",
@@ -333,26 +338,52 @@ is `MonacoReplEditor`.
 
 ### 5.3 Custom vendor: `mini-react-repl/vendor-builder`
 
+The builder takes an entry-file manifest (`vendor.ts`) where each manifest
+entry is a namespace import + re-export. The export name becomes the import-
+map key; the source specifier is what gets bundled. Aliasing is just a
+rename; the iframe-runtime required core comes from
+`mini-react-repl/vendor-base` (re-export it, or get a build error).
+
+```ts
+// vendor.ts
+export * from 'mini-react-repl/vendor-base';
+
+import * as zod from 'zod';
+import * as framer from 'framer-motion';
+import * as lodash from 'lodash-es'; // alias source: iframe imports 'lodash'
+
+export { zod, framer as 'framer-motion', lodash };
+```
+
 ```bash
-# CLI:
-npx repl-vendor-build \
-  --packages react,react-dom,date-fns,zod,my-design-system \
+# CLI (hosted format only — use the API for inline/data: URL builds):
+npx repl-vendor-build vendor.ts \
   --out public/vendor \
-  --format hosted \         # or 'inline' to emit a JSON of data: URLs
-  --types embed             # also collect .d.ts (default 'omit')
+  --bundle-out src/vendor/repl.vendor.json
+# base-url is inferred from --out (`public/vendor` → `/vendor`)
+#
+# emits:
+#   public/vendor/<spec>.<hash>.js  (one ESM chunk per package)
+#   public/vendor/repl.types.json   (.d.ts payload, fetched at runtime)
+#   src/vendor/repl.vendor.json     ({ importMap }, bundler-imported)
+#
+# Wiring: the bundle JSON embeds a `typesUrl` pointer so `<Repl/>` fetches
+# and registers the .d.ts payload itself — no consumer-side fetch needed
+#   import vendor from './vendor/repl.vendor.json';
+#   <Repl vendor={vendor} ... />
 ```
 
 ```ts
-// programmatic:
+// programmatic — full control over format and output paths:
 import { build } from 'mini-react-repl/vendor-builder';
 const vendor = await build({
-  packages: ['react', 'react-dom', 'zod', 'framer-motion'],
-  format: 'hosted',
+  entry: 'vendor.ts',
+  format: 'hosted', // or 'inline' for data: URLs
   outDir: 'public/vendor',
-  types: 'embed', // also collect .d.ts; default 'omit'
+  types: 'embed', // collect .d.ts; default 'omit'
 });
-//  → emits public/vendor/<pkg>.<hash>.js + types.json
-//  → returns { importMap, baseUrl, types }
+//  → emits public/vendor/<pkg>.<hash>.js, returns importMap + types in result
+//  → returns { importMap, types }
 ```
 
 The builder is an esbuild wrapper for the JS, plus a small `.d.ts` walker
@@ -361,6 +392,12 @@ for the `types` payload (resolves each package's own types or its
 produces a single JSON file with base64 data URLs (good for srcdoc
 consumers); `format: 'hosted'` produces real files (better for caching).
 `types: 'omit'` (default) skips type collection entirely.
+
+The entry-file shape solves four problems the older `--packages a,b,c` flag
+didn't: knip / dep-check tools see real imports; comments live next to each
+entry; aliasing is standard ESM (`export { lodash }` keys lodash-es as
+`lodash`); monorepo `.ts`-source workspace packages resolve through esbuild
+without hitting Node's `import()` strip-types restriction in `node_modules`.
 
 ### 5.4 Mixing
 
@@ -1003,7 +1040,7 @@ non-success arms in the `@returns`:
  * @example Custom vendor
  * ```tsx
  * import { build } from 'mini-react-repl/vendor-builder'
- * const vendor = await build({ packages: ['react', 'zod'], format: 'inline' })
+ * const vendor = await build({ entry: 'vendor.ts', format: 'inline' })
  * ```
  */
 ````
@@ -1101,21 +1138,21 @@ playground decisions below for completeness.
 
 ### Library shape
 
-| Decision                | Choice                                                                                                                       | Rejected because                                                                                               |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Package layout          | Single `mini-react-repl` package with subpath exports (`/editor-monaco`, `/vendor-default`, `/vendor-builder`, `/theme.css`) | Monorepo split adds maintenance overhead with no v1 consumer demand.                                           |
-| State ownership         | Strictly controlled — consumer always passes `files` + `onFilesChange`                                                       | Hybrid hides state; pure imperative is un-React-y.                                                             |
-| Vendor ownership        | Library ships a default + accepts override                                                                                   | Pure-CDN breaks offline; consumer-only forces a build step on every demo.                                      |
-| Composition             | Headless parts + convenience `<Repl/>`                                                                                       | Headless-only requires too much glue for typical use; convenience-only doesn't scale to embeds.                |
-| Preview HTML            | srcdoc with inlined HTML                                                                                                     | Static-file approach forces consumers to copy a file per bundler; blob URL has spotty cross-browser behavior.  |
-| Worker delivery         | Bundler-native `new Worker(new URL('./worker.js', import.meta.url))`                                                         | Inline-Blob trick adds CSP friction; explicit `workerUrl` shifts setup to consumer.                            |
-| Editor coupling         | Headless by default; `MonacoReplEditor` exposed via separate import path so it's only bundled when imported                  | Hard-bundling Monaco bloats every consumer; pure-headless leaves zero-config users stranded.                   |
-| Styling                 | Unstyled primitives + optional `theme.css`                                                                                   | Bundled CSS can't be themed; CSS-in-JS adds a build dep; Tailwind is opinionated.                              |
-| Iframe extras           | `headHtml` / `bodyHtml` raw-string slot props on `<ReplPreview/>`                                                            | Structured options grow forever; transformer fn is a footgun.                                                  |
-| Error UI                | `showPreviewErrorOverlay` + `onPreviewError` props on `<ReplPreview/>` (forwarded by `<Repl/>`)                              | Hook-only loses zero-config UX; default-only blocks customization.                                             |
-| Headless hook surface   | `files` + `setFile` / `removeFile` / `renameFile` only                                                                       | Errors and imperatives expand the contract before we know what's actually needed.                              |
-| Helper modules          | None in v1                                                                                                                   | Each helper is a separate design problem; ship core first, helpers when there's pull.                          |
-| Editor type-acquisition | `vendor.types` slot + `MonacoReplEditor` registers with `addExtraLib`; default vendor pre-bakes types for the curated set    | Doing nothing leaves Monaco shouting `17004`/`2792` over correct code; full LSP-in-worker is too heavy for v1. |
+| Decision                | Choice                                                                                                                                       | Rejected because                                                                                               |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Package layout          | Single `mini-react-repl` package with subpath exports (`/editor-monaco`, `/vendor-default`, `/vendor-base`, `/vendor-builder`, `/theme.css`) | Monorepo split adds maintenance overhead with no v1 consumer demand.                                           |
+| State ownership         | Strictly controlled — consumer always passes `files` + `onFilesChange`                                                                       | Hybrid hides state; pure imperative is un-React-y.                                                             |
+| Vendor ownership        | Library ships a default + accepts override                                                                                                   | Pure-CDN breaks offline; consumer-only forces a build step on every demo.                                      |
+| Composition             | Headless parts + convenience `<Repl/>`                                                                                                       | Headless-only requires too much glue for typical use; convenience-only doesn't scale to embeds.                |
+| Preview HTML            | srcdoc with inlined HTML                                                                                                                     | Static-file approach forces consumers to copy a file per bundler; blob URL has spotty cross-browser behavior.  |
+| Worker delivery         | Bundler-native `new Worker(new URL('./worker.js', import.meta.url))`                                                                         | Inline-Blob trick adds CSP friction; explicit `workerUrl` shifts setup to consumer.                            |
+| Editor coupling         | Headless by default; `MonacoReplEditor` exposed via separate import path so it's only bundled when imported                                  | Hard-bundling Monaco bloats every consumer; pure-headless leaves zero-config users stranded.                   |
+| Styling                 | Unstyled primitives + optional `theme.css`                                                                                                   | Bundled CSS can't be themed; CSS-in-JS adds a build dep; Tailwind is opinionated.                              |
+| Iframe extras           | `headHtml` / `bodyHtml` raw-string slot props on `<ReplPreview/>`                                                                            | Structured options grow forever; transformer fn is a footgun.                                                  |
+| Error UI                | `showPreviewErrorOverlay` + `onPreviewError` props on `<ReplPreview/>` (forwarded by `<Repl/>`)                                              | Hook-only loses zero-config UX; default-only blocks customization.                                             |
+| Headless hook surface   | `files` + `setFile` / `removeFile` / `renameFile` only                                                                                       | Errors and imperatives expand the contract before we know what's actually needed.                              |
+| Helper modules          | None in v1                                                                                                                                   | Each helper is a separate design problem; ship core first, helpers when there's pull.                          |
+| Editor type-acquisition | `vendor.types` slot + `MonacoReplEditor` registers with `addExtraLib`; default vendor pre-bakes types for the curated set                    | Doing nothing leaves Monaco shouting `17004`/`2792` over correct code; full LSP-in-worker is too heavy for v1. |
 
 ### Playground / runtime decisions (carried over)
 

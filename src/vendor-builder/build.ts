@@ -1,11 +1,18 @@
 /**
  * Programmatic vendor-bundle builder.
  *
- * Produces ESM modules for a list of bare specifiers using esbuild, plus a
- * standard import map mapping each specifier to the produced output (or to a
- * `data:` URL when `format: 'inline'`). With `types: 'embed'`, also collects
- * the matching `.d.ts` graph into `vendor.types` so editors (e.g. Monaco)
- * can light up squiggles and hover signatures for the vendor packages.
+ * Reads a user-authored entry file (e.g. `vendor.ts`) that declares the bundle
+ * shape via standard ESM `import * as X from '<spec>'; export { X as '<key>' }`,
+ * resolves it into a manifest of `(key, specifier)` pairs, and produces one
+ * ESM bundle per unique specifier plus a standard import map keyed by the
+ * user-chosen names. With `types: 'embed'`, also collects the matching
+ * `.d.ts` graph into `vendor.types`.
+ *
+ * The required iframe-runtime core (`react`, `react-dom`, `react-dom/client`,
+ * `react/jsx-runtime`, `react/jsx-dev-runtime`, `react-refresh/runtime`) is
+ * not auto-injected; users opt in explicitly with
+ * `export * from 'mini-react-repl/vendor-base'`. Missing entries trigger a
+ * descriptive error.
  *
  * Designed to run in Node, not in the browser (esbuild and the type walker
  * both require it).
@@ -14,18 +21,17 @@
  * ```ts
  * import { build } from 'mini-react-repl/vendor-builder'
  * const vendor = await build({
- *   packages: ['react', 'react-dom/client', 'date-fns'],
+ *   entry: 'vendor.ts',
  *   format: 'hosted',
  *   outDir: 'public/vendor',
  * })
- * // vendor.importMap → { imports: { 'react': '/vendor/react.js', ... } }
- * // files written to ./public/vendor/*.js
+ * // vendor.importMap → { imports: { 'react': '/vendor/react.<hash>.js', ... } }
  * ```
  *
  * @example Inline output with types (works under iframe srcdoc)
  * ```ts
  * const vendor = await build({
- *   packages: ['react', 'react-dom/client', 'date-fns'],
+ *   entry: 'vendor.ts',
  *   format: 'inline',
  *   types: 'embed',
  * })
@@ -44,8 +50,9 @@ import { pathToFileURL } from 'node:url';
 import type { ImportMap, TypeBundle, VendorBundle } from '../types.ts';
 
 /**
- * Specifiers the iframe runtime hard-imports through the import map. They
- * must always be in the produced vendor or the preview never boots:
+ * Specifiers the iframe runtime hard-imports through the import map. Missing
+ * any of these makes the preview fail to boot, so we validate them as keys
+ * in the resolved manifest:
  *
  * - `react`, `react-dom/client`, `react-refresh/runtime` — imported by the
  *   in-iframe runtime and preamble (see `src/runtime/preamble.ts`,
@@ -63,15 +70,36 @@ const REQUIRED_CORE = [
   'react-refresh/runtime',
 ] as const;
 
+/**
+ * Bare specifiers whose source the manifest extractor follows (instead of
+ * marking external) so their exports merge into the user's manifest. Today
+ * just our own shipped subpath; a future option could let third parties
+ * publish their own preset modules.
+ */
+const FOLLOW_PACKAGES: ReadonlySet<string> = new Set(['mini-react-repl/vendor-base']);
+
 export type BuildOptions = {
   /**
-   * Bare specifiers to bundle. Can include subpaths (`'react-dom/client'`,
-   * `'react/jsx-runtime'`).
+   * Path to the entry file (TypeScript or JavaScript) that declares the
+   * vendor manifest. Resolved relative to {@link cwd}.
+   *
+   * @example
+   * ```ts
+   * // vendor.ts
+   * export * from 'mini-react-repl/vendor-base'  // required core
+   *
+   * import * as zod from 'zod'
+   * import * as lodash from 'lodash-es'           // alias source
+   * export {
+   *   zod,
+   *   lodash,                                     // import-map key 'lodash'
+   * }
+   * ```
    */
-  packages: string[];
+  entry: string;
   /**
-   * `'hosted'` writes one file per package to `outDir` and returns an import
-   * map with relative URLs (rooted at `baseUrl`, default `/vendor`).
+   * `'hosted'` writes one file per unique specifier to `outDir` and returns
+   * an import map with relative URLs (rooted at `baseUrl`, default `/vendor`).
    * `'inline'` returns an import map with `data:` URLs and writes nothing.
    */
   format: 'hosted' | 'inline';
@@ -88,56 +116,21 @@ export type BuildOptions = {
   /** Working directory for module resolution. @defaultValue `process.cwd()` */
   cwd?: string;
   /**
-   * `'embed'` collects `.d.ts` files for each package (own types or
+   * `'embed'` collects `.d.ts` files for each manifest specifier (own types or
    * `@types/<name>` fallback) and returns them in `vendor.types`. Editors
    * that consume types — Monaco via `mini-react-repl/editor-monaco` — register
    * them with the in-browser TypeScript service.
    *
-   * For `format: 'hosted'`, a `types.json` file is also written next to the
-   * JS modules.
+   * The build never writes `types.json` to disk — callers receive `types`
+   * on the returned `VendorBundle` and decide where (or whether) to persist
+   * them. The CLI exposes `--types-out <path>` for this.
    *
    * @defaultValue `'omit'`
    */
   types?: 'embed' | 'omit';
-  /**
-   * Specifiers that should NOT be bundled into other packages — they resolve
-   * at runtime via the import map. Each entry must also appear in `packages`
-   * (or be auto-included via {@link includeRequiredCore}).
-   *
-   * When omitted, the effective external set is `packages` PLUS the
-   * auto-included required core. That's the default users almost always
-   * want: bundling `react,react-dom,recharts` in one go produces three
-   * modules that share a single React copy at runtime, not three private
-   * React copies — and the auto-included `react`, `react-dom/client`, etc.
-   * are externalized for the same reason.
-   *
-   * Subpaths of the same physical package (e.g. `react-dom` and
-   * `react-dom/client`) are never cross-externalized regardless: their
-   * shared internal state must stay co-located in one bundle.
-   */
-  external?: string[];
-  /**
-   * Whether to auto-include the core specifiers the iframe runtime requires
-   * (`react`, `react-dom`, `react-dom/client`, `react/jsx-runtime`,
-   * `react/jsx-dev-runtime`, `react-refresh/runtime`). Missing entries are
-   * prepended to `packages` and bundled with the same external rules.
-   *
-   * Set to `false` only if you're slotting these in from a different vendor.
-   *
-   * @defaultValue `true`
-   */
-  includeRequiredCore?: boolean;
-  /**
-   * Override the specifier list used for `.d.ts` collection when
-   * `types: 'embed'`. Defaults to the same list as `packages` (after
-   * required-core auto-include).
-   *
-   * Useful when an entry has no public-facing types you care about — e.g.
-   * `react-refresh/runtime` is consumed only by the iframe runtime, never
-   * by user code.
-   */
-  typesPackages?: string[];
 };
+
+type ManifestEntry = { key: string; specifier: string };
 
 /** Build a vendor bundle. Returns the {@link VendorBundle} the consumer passes to `<Repl/>`. */
 export async function build(options: BuildOptions): Promise<VendorBundle> {
@@ -145,61 +138,171 @@ export async function build(options: BuildOptions): Promise<VendorBundle> {
   const nodeEnv = options.nodeEnv ?? 'development';
   const cwd = options.cwd ?? process.cwd();
   const wantTypes = options.types === 'embed';
-  const includeCore = options.includeRequiredCore ?? true;
 
   if (options.format === 'hosted' && !options.outDir) {
     throw new Error("build({ format: 'hosted' }) requires outDir");
   }
 
-  const packages = withRequiredCore(options.packages, includeCore);
-  const externals = options.external ?? packages;
+  const entryPath = resolve(cwd, options.entry);
+  const manifest = await extractManifest(entryPath, cwd);
+
+  // Same specifier may appear under multiple keys (aliasing) — bundle once,
+  // emit one import-map entry per key pointing at the same URL.
+  const uniqueSpecs = [...new Set(manifest.map((m) => m.specifier))];
 
   const importMap: ImportMap = { imports: {} };
   const types: TypeBundle | undefined = wantTypes
-    ? await collectTypes(options.typesPackages ?? packages, cwd)
+    ? await collectTypes(uniqueSpecs, cwd)
     : undefined;
+
+  // externals for per-package bundling are the import-map KEYS (not specs).
+  // The exact-external plugin matches the bare-specifier strings appearing
+  // inside each package's source; those resolve through the iframe's import
+  // map at runtime, which is keyed by the user's chosen names.
+  const allKeys = manifest.map((m) => m.key);
 
   if (options.format === 'hosted') {
     const outDir = resolve(cwd, options.outDir!);
     await mkdir(outDir, { recursive: true });
 
-    for (const pkg of packages) {
-      const code = await bundlePackage(pkg, externalsFor(pkg, externals), nodeEnv, cwd);
-      const safe = pkg.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '');
+    const specToUrl = new Map<string, string>();
+    for (const spec of uniqueSpecs) {
+      const externals = externalsFor(spec, manifest);
+      const code = await bundlePackage(spec, externals, nodeEnv, cwd);
+      const safe = spec.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '');
       const hash = shortHash(code);
       const filename = `${safe}.${hash}.js`;
       await writeFile(join(outDir, filename), code, 'utf8');
-      importMap.imports[pkg] = `${baseUrl.replace(/\/+$/, '')}/${filename}`;
+      specToUrl.set(spec, `${baseUrl.replace(/\/+$/, '')}/${filename}`);
     }
-    if (types) {
-      await writeFile(join(outDir, 'types.json'), JSON.stringify(types) + '\n', 'utf8');
+    for (const m of manifest) {
+      importMap.imports[m.key] = specToUrl.get(m.specifier)!;
     }
     return types ? { importMap, types } : { importMap };
   }
 
   // inline
-  for (const pkg of packages) {
-    const code = await bundlePackage(pkg, externalsFor(pkg, externals), nodeEnv, cwd);
-    const dataUrl = toDataUrl(code);
-    importMap.imports[pkg] = dataUrl;
+  const specToUrl = new Map<string, string>();
+  for (const spec of uniqueSpecs) {
+    const externals = externalsFor(spec, manifest);
+    const code = await bundlePackage(spec, externals, nodeEnv, cwd);
+    specToUrl.set(spec, toDataUrl(code));
+  }
+  for (const m of manifest) {
+    importMap.imports[m.key] = specToUrl.get(m.specifier)!;
   }
   return types ? { importMap, types } : { importMap };
 }
 
-function withRequiredCore(packages: string[], include: boolean): string[] {
-  const seen = new Set(packages);
-  if (!include) return [...seen];
-  const missing = REQUIRED_CORE.filter((s) => !seen.has(s));
-  return [...missing, ...packages];
+/**
+ * Bundle the entry file with all bare specifiers external (except the small
+ * follow-set) so the resulting ESM is a flat manifest of `import * as X from
+ * "<spec>"` + `export { X as "<key>" }`. Parse it via es-module-lexer and
+ * compose the (key, specifier) pairs.
+ *
+ * @internal exported for tests
+ */
+export async function extractManifest(entryPath: string, cwd: string): Promise<ManifestEntry[]> {
+  const esbuild = await loadEsbuild();
+  const result = await esbuild.build({
+    entryPoints: [entryPath],
+    absWorkingDir: cwd,
+    bundle: true,
+    format: 'esm',
+    target: 'es2022',
+    platform: 'browser',
+    write: false,
+    minify: false,
+    metafile: true,
+    legalComments: 'none',
+    logLevel: 'silent',
+    plugins: [
+      {
+        name: 'manifest-externals',
+        setup(b) {
+          b.onResolve({ filter: /.*/ }, (args) => {
+            if (args.kind === 'entry-point') return null;
+            // Relative & absolute paths — let esbuild resolve and follow.
+            if (args.path.startsWith('.') || args.path.startsWith('/')) return null;
+            // Subpath imports map (#foo) — let esbuild resolve.
+            if (args.path.startsWith('#')) return null;
+            // Follow our shipped subpath so its exports merge into the manifest.
+            if (FOLLOW_PACKAGES.has(args.path)) return null;
+            return { path: args.path, external: true };
+          });
+        },
+      },
+    ],
+  });
+
+  const output = result.outputFiles?.[0]?.text;
+  if (!output) {
+    throw new Error(`Failed to extract manifest from '${entryPath}': esbuild produced no output.`);
+  }
+
+  const lexer = await import('es-module-lexer');
+  await lexer.init;
+  const [imports, exports] = lexer.parse(output);
+
+  // local-binding -> specifier from `import * as <local> from "<spec>"`. The
+  // analyzer only honors namespace imports; default/named imports don't
+  // identify a single package to bundle.
+  const bindings = new Map<string, string>();
+  for (const imp of imports) {
+    if (imp.n === undefined) continue;
+    const stmt = output.slice(imp.ss, imp.se);
+    const m = /^\s*import\s*\*\s*as\s+([A-Za-z_$][A-Za-z0-9_$]*)\s+from\s/.exec(stmt);
+    if (m && m[1]) bindings.set(m[1], imp.n);
+  }
+
+  const manifest: ManifestEntry[] = [];
+  for (const ex of exports) {
+    if (ex.ln) {
+      // Two-step form: `import * as X from 'spec'; export { X as 'key' };`
+      const spec = bindings.get(ex.ln);
+      if (!spec) {
+        throw new Error(
+          `vendor entry '${entryPath}': export '${ex.n}' is not backed by a namespace ` +
+            `import. Vendor manifest entries must bundle the whole package, so use ` +
+            `\`import * as X from '<spec>'; export { X as '${ex.n}' };\` or ` +
+            `\`export * as '${ex.n}' from '<spec>';\` (default and named imports / ` +
+            `partial re-exports are not supported).`,
+        );
+      }
+      manifest.push({ key: ex.n, specifier: spec });
+      continue;
+    }
+    // Re-export-from form (typically `export * as 'key' from 'spec'`). Find
+    // the import statement covering this export's source position.
+    const stmt = imports.find((imp) => imp.n !== undefined && ex.s >= imp.ss && ex.e <= imp.se);
+    if (!stmt) {
+      throw new Error(`vendor entry '${entryPath}': export '${ex.n}' has no resolvable source.`);
+    }
+    manifest.push({ key: ex.n, specifier: stmt.n! });
+  }
+
+  // Required iframe-runtime core: surface a clear, actionable error if
+  // anything's missing. Hint at the shipped re-export.
+  const keys = new Set(manifest.map((m) => m.key));
+  const missingCore = REQUIRED_CORE.filter((c) => !keys.has(c));
+  if (missingCore.length > 0) {
+    throw new Error(
+      `vendor entry '${entryPath}' is missing required iframe-runtime specifiers: ` +
+        `${missingCore.map((c) => `'${c}'`).join(', ')}. ` +
+        `Add \`export * from 'mini-react-repl/vendor-base'\` to the entry file.`,
+    );
+  }
+
+  return manifest;
 }
 
 /**
- * Auto-derive externals for `specifier` from `all`. Excludes the specifier
- * itself, plus any other listed entry that's a subpath of the same physical
- * package — e.g. when bundling `react-dom/client`, never externalize
- * `react-dom`. Subpaths of the same package share internal state via
- * package-relative imports; splitting them across module records breaks the
- * createRoot machinery.
+ * Auto-derive externals for `specifier` from the manifest. Excludes the
+ * specifier itself (under any key) and any other manifest entry that's a
+ * subpath of the same physical package — e.g. when bundling `react-dom/client`,
+ * never externalize `react-dom`. Subpaths of the same package share internal
+ * state via package-relative imports; splitting them across module records
+ * breaks the createRoot machinery.
  *
  * Exception: `react` is always externalized when listed, even from its own
  * subpaths. It is the canonical shared singleton of the ecosystem — every
@@ -208,14 +311,20 @@ function withRequiredCore(packages: string[], include: boolean): string[] {
  * "Invalid hook call". `react/jsx-runtime`'s body only consumes React's
  * stable public API (createElement), not its internal state, so sharing
  * is safe.
+ *
+ * Returns import-map KEYS (not specifiers) — that's what the iframe's import
+ * map serves at runtime, and what bare-specifier `require()`s inside each
+ * package resolve through.
  */
-function externalsFor(specifier: string, all: string[]): string[] {
+function externalsFor(specifier: string, manifest: ManifestEntry[]): string[] {
   const pkg = packageOf(specifier);
-  return all.filter((s) => {
-    if (s === specifier) return false;
-    if (packageOf(s) === pkg) return s === 'react';
-    return true;
-  });
+  const out = new Set<string>();
+  for (const m of manifest) {
+    if (m.specifier === specifier) continue;
+    if (packageOf(m.specifier) === pkg && m.specifier !== 'react') continue;
+    out.add(m.key);
+  }
+  return [...out];
 }
 
 function packageOf(specifier: string): string {
@@ -460,10 +569,13 @@ function shortHash(s: string): string {
 async function collectTypes(packages: string[], cwd: string): Promise<TypeBundle> {
   const rootReq = createRequire(pathToFileURL(join(cwd, '__entry__.js')).href);
   const seen = new Set<string>();
+  // Track packages whose synthetic `package.json` shim has been emitted, so
+  // walking multiple subpaths of the same package only yields one shim.
+  const packageJsonEmitted = new Set<string>();
   const libs: Array<{ path: string; content: string }> = [];
 
   for (const spec of packages) {
-    await walkSpec(spec, rootReq, seen, libs);
+    await walkSpec(spec, rootReq, seen, packageJsonEmitted, libs);
   }
   return { libs };
 }
@@ -474,6 +586,7 @@ async function walkSpec(
   spec: string,
   req: NodeRequire,
   seen: Set<string>,
+  packageJsonEmitted: Set<string>,
   libs: Array<{ path: string; content: string }>,
 ): Promise<void> {
   const entry = await resolveTypesEntry(spec, req);
@@ -481,7 +594,33 @@ async function walkSpec(
     process.stderr.write(`[vendor-builder] no .d.ts found for '${spec}', skipping\n`);
     return;
   }
-  await walkFile(entry.absPath, entry.ownerPkg, entry.ownerRoot, seen, libs);
+  // Synthetic package.json shim — Monaco's NodeJs module resolution reads
+  // `node_modules/<pkg>/package.json`'s `types` field to find the entry .d.ts.
+  // Without it, packages whose entry file is `index.d.cts` / `index.d.mts`
+  // (e.g. zod) fall back to the default `index.d.ts` probe and aren't found.
+  // Also: Monaco's TS service resolves `.d.cts` / `.d.mts` flakily under
+  // NodeJs moduleResolution, so we serialize every type file under a `.d.ts`
+  // path (content unchanged), and point `types` at the same.
+  if (!packageJsonEmitted.has(entry.ownerPkg)) {
+    packageJsonEmitted.add(entry.ownerPkg);
+    const relTypes = normalizeDtsPath(
+      relative(entry.ownerRoot, entry.absPath).split('\\').join('/'),
+    );
+    libs.push({
+      path: `file:///node_modules/${entry.ownerPkg}/package.json`,
+      content: JSON.stringify({ name: entry.ownerPkg, types: `./${relTypes}` }),
+    });
+  }
+  await walkFile(entry.absPath, entry.ownerPkg, entry.ownerRoot, seen, packageJsonEmitted, libs);
+}
+
+/**
+ * Map `.d.cts` / `.d.mts` extensions to `.d.ts` so the bundled type files
+ * resolve uniformly under Monaco's TS service. Content is unchanged; only
+ * the public path the editor sees is normalized.
+ */
+function normalizeDtsPath(p: string): string {
+  return p.replace(/\.d\.[mc]ts$/, '.d.ts');
 }
 
 function parseSpecifier(spec: string): { pkgName: string; subpath: string | null } {
@@ -551,6 +690,7 @@ async function tryResolvePkg(
       join(pjDir, `${subpath}.d.ts`),
       join(pjDir, subpath, 'index.d.ts'),
       join(pjDir, `${subpath}.d.mts`),
+      join(pjDir, `${subpath}.d.cts`),
     ];
     for (const c of candidates) {
       if (await fileExists(c)) return { absPath: c, ownerPkg, ownerRoot: pjDir };
@@ -573,13 +713,14 @@ async function walkFile(
   ownerPkg: string,
   ownerRoot: string,
   seen: Set<string>,
+  packageJsonEmitted: Set<string>,
   libs: Array<{ path: string; content: string }>,
 ): Promise<void> {
   if (seen.has(absPath)) return;
   seen.add(absPath);
 
   const content = await readFile(absPath, 'utf8');
-  const rel = relative(ownerRoot, absPath).split('\\').join('/');
+  const rel = normalizeDtsPath(relative(ownerRoot, absPath).split('\\').join('/'));
   const uri = `file:///node_modules/${ownerPkg}/${rel}`;
   libs.push({ path: uri, content });
 
@@ -595,7 +736,7 @@ async function walkFile(
       : [resolve(dir, `${ref}.d.ts`), resolve(dir, ref, 'index.d.ts'), resolve(dir, ref)];
     for (const c of candidates) {
       if (await fileExists(c)) {
-        await walkFile(c, ownerPkg, ownerRoot, seen, libs);
+        await walkFile(c, ownerPkg, ownerRoot, seen, packageJsonEmitted, libs);
         break;
       }
     }
@@ -615,18 +756,19 @@ async function walkFile(
       const candidates = [
         resolve(dir, `${base}.d.ts`),
         resolve(dir, `${base}.d.mts`),
+        resolve(dir, `${base}.d.cts`),
         resolve(dir, base, 'index.d.ts'),
         resolve(dir, imp),
       ];
       for (const c of candidates) {
-        if ((c.endsWith('.d.ts') || c.endsWith('.d.mts')) && (await fileExists(c))) {
-          await walkFile(c, ownerPkg, ownerRoot, seen, libs);
+        if (/\.d\.[mc]?ts$/.test(c) && (await fileExists(c))) {
+          await walkFile(c, ownerPkg, ownerRoot, seen, packageJsonEmitted, libs);
           break;
         }
       }
     } else {
       // Bare specifier — resolve as a fresh package; gives it its own owner.
-      await walkSpec(imp, localReq, seen, libs);
+      await walkSpec(imp, localReq, seen, packageJsonEmitted, libs);
     }
   }
 }

@@ -1,0 +1,29 @@
+{
+  "name": "custom-vendor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm run build:vendor && vite",
+    "build": "pnpm run build:vendor && vite build",
+    "preview": "vite preview",
+    "build:vendor": "repl-vendor-build src/vendor/vendor.ts --out public/vendor --bundle-out src/vendor/repl.vendor.json",
+    "postinstall": "pnpm run build:vendor || true"
+  },
+  "dependencies": {
+    "@swc/wasm-web": "1.15.30",
+    "mini-react-repl": "workspace:*",
+    "monaco-editor": "^0.55.1",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "esbuild": "^0.28.0",
+    "nanoid": "^5.1.9",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.10"
+  }
+}

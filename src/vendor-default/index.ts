@@ -10,8 +10,12 @@
  *
  * @example
  * ```ts
+ * // sync (eager)
  * import { defaultVendor } from 'mini-react-repl/vendor-default'
  * <Repl vendor={defaultVendor} ... />
+ *
+ * // async (code-split — pass the dynamic import directly)
+ * <Repl vendor={import('mini-react-repl/vendor-default')} ... />
  * ```
  *
  * @see {@link build} for producing a custom vendor
@@ -19,4 +23,7 @@
  * @public
  */
 
-export { DEFAULT_VENDOR as defaultVendor } from './data.ts';
+import { DEFAULT_VENDOR } from './data.ts';
+
+export { DEFAULT_VENDOR as defaultVendor };
+export default DEFAULT_VENDOR;

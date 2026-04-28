@@ -88,5 +88,8 @@ function resolveImportMap(vendor: VendorBundle): ImportMap {
 }
 
 function isAbsolute(url: string): boolean {
-  return /^(?:[a-z]+:|data:|blob:|\/\/)/i.test(url);
+  // Includes root-relative paths (`/foo`): the CLI's hosted format already
+  // emits `${baseUrl}/${filename}`, so re-prepending baseUrl in the consumer
+  // would double the prefix.
+  return /^(?:[a-z]+:|data:|blob:|\/)/i.test(url);
 }

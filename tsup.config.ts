@@ -13,6 +13,7 @@ export default defineConfig({
     'editor-monaco/index.node': 'src/editor-monaco/index.node.tsx',
     // Browser-targeted default export
     'vendor-default/index': 'src/vendor-default/index.ts',
+    'vendor-base': 'src/vendor-base.ts',
     'vendor-builder/build': 'src/vendor-builder/build.ts',
     'vendor-builder/cli': 'src/vendor-builder/cli.ts',
     'preview-html': 'src/preview-html.ts',
@@ -28,6 +29,8 @@ export default defineConfig({
     'react',
     'react-dom',
     'react-dom/client',
+    'react/jsx-runtime',
+    'react/jsx-dev-runtime',
     'monaco-editor',
     'es-module-lexer',
     'react-refresh/runtime',

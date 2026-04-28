@@ -12,7 +12,6 @@ npm i mini-react-repl monaco-editor react react-dom
 ```tsx
 import { useState } from 'react';
 import { Repl } from 'mini-react-repl';
-import { defaultVendor } from 'mini-react-repl/vendor-default';
 import { MonacoReplEditor } from 'mini-react-repl/editor-monaco';
 import 'mini-react-repl/theme.css';
 
@@ -23,7 +22,12 @@ const HELLO = {
 export default function Playground() {
   const [files, setFiles] = useState(HELLO);
   return (
-    <Repl files={files} onFilesChange={setFiles} vendor={defaultVendor} editor={MonacoReplEditor} />
+    <Repl
+      editor={MonacoReplEditor}
+      files={files}
+      onFilesChange={setFiles}
+      vendor={import('mini-react-repl/vendor-default')}
+    />
   );
 }
 ```
@@ -240,39 +244,67 @@ if your demo needs literally only those libs, stop reading.
 
 ### Custom
 
-You're going to outgrow the default. when that happens:
+You're going to outgrow the default. when that happens, write a `vendor.ts`
+that declares the bundle shape via standard ESM imports/exports:
+
+```ts
+// vendor.ts
+// Re-exports the iframe-runtime required core (react, react-dom,
+// react-dom/client, react/jsx-runtime, react/jsx-dev-runtime,
+// react-refresh/runtime). Skip this and the build errors loudly.
+export * from 'mini-react-repl/vendor-base';
+
+import * as zod from 'zod';
+import * as framer from 'framer-motion';
+import * as lodash from 'lodash-es'; // alias source: iframe imports 'lodash'
+
+export { zod, framer as 'framer-motion', lodash };
+```
+
+then build it:
 
 ```sh
 # repl-vendor-build needs esbuild; it's an optional peer dep, install once:
 npm i -D esbuild
 
-npx repl-vendor-build \
-  --packages react,react-dom,zod,framer-motion,my-internal-lib \
+npx repl-vendor-build vendor.ts \
   --out public/vendor \
-  --format hosted \
-  --types embed   # also collect .d.ts so Monaco squiggles work
+  --bundle-out src/vendor/repl.vendor.json
+# → public/vendor/<chunks>.js     (one ESM chunk per package, served at /vendor/*)
+# → public/vendor/repl.types.json (.d.ts payload, fetched at runtime)
+# → src/vendor/repl.vendor.json   (just the import map — bundler-imported)
 ```
 
-then:
+types live next to the JS chunks rather than inlined in the bundler-imported
+JSON, so the bundler chunk stays tiny (a few KB) and the multi-MB `.d.ts`
+payload is fetched in parallel. The bundle JSON embeds a `typesUrl` pointer,
+so `<Repl/>` does the fetch itself — wiring is just:
 
 ```tsx
-<Repl vendor={{ importMap: myImportMap, baseUrl: '/vendor' }} ... />
+import vendor from './vendor/repl.vendor.json';
+<Repl vendor={vendor} ... />
+```
+
+or code-split:
+
+```tsx
+<Repl vendor={import('./vendor/repl.vendor.json')} ... />
 ```
 
 the builder is an esbuild wrapper. `format: 'inline'` emits base64 data URLs
 (stay-within-srcdoc, no hosting). `format: 'hosted'` emits real files with
-content hashes you can serve under `Cache-Control: immutable`.
+content hashes you can serve under `Cache-Control: immutable`
 
 programmatic API too if you want to run it from a script:
 
 ```ts
-import { build } from 'mini-react-repl/vendor-builder'
+import { build } from 'mini-react-repl/vendor-builder';
 const vendor = await build({
-  packages: [...],
+  entry: 'vendor.ts',
   format: 'hosted',
   outDir: 'public/vendor',
   types: 'embed', // optional; default 'omit'
-})
+});
 ```
 
 ### Mix
@@ -341,10 +373,12 @@ TS2792 (module not found). If you want to override:
 Same for `diagnosticsOptions`. Both are passthroughs to
 `monaco.languages.typescript.typescriptDefaults`.
 
-If `vendor.types` is set (the default vendor pre-bakes it; the builder's
-`--types embed` flag generates it for custom vendors),
+If `vendor.types` is set (the default vendor pre-bakes it; the builder
+emits `repl.types.json` next to the chunks for custom vendors),
 `MonacoReplEditor` registers each `.d.ts` via `addExtraLib` so users get
-real diagnostics + hover signatures for vendor packages.
+real diagnostics + hover signatures for vendor packages. `vendor.types`
+also accepts a `Promise<TypeBundle>` so a runtime `fetch('/vendor/repl.types.json')`
+loads in parallel to the rest of the app.
 
 ### CodeMirror? plain textarea?
 
@@ -498,7 +532,8 @@ boring, static-deployable React playground with a known set of libs, this.
 ## FAQ
 
 **how do I add a library?**
-edit a `vendor.config.ts`, run `npx repl-vendor-build`, pass the result.
+write a `vendor.ts` (re-export `mini-react-repl/vendor-base` plus your own
+deps), run `npx repl-vendor-build vendor.ts`, pass the result.
 see [Vendor](#vendor).
 
 **can I use this for tutorials / blog post embeds?**

@@ -1,6 +1,6 @@
 {
   "name": "mini-react-repl",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Browser-only React TSX REPL — multi-file editor, live preview, real Fast Refresh, no backend.",
   "keywords": [
     "fast-refresh",
@@ -51,6 +51,10 @@
       "types": "./dist/vendor-default/index.d.ts",
       "import": "./dist/vendor-default/index.js"
     },
+    "./vendor-base": {
+      "types": "./dist/vendor-base.d.ts",
+      "import": "./dist/vendor-base.js"
+    },
     "./vendor-builder": {
       "types": "./dist/vendor-builder/build.d.ts",
       "import": "./dist/vendor-builder/build.js"
@@ -70,7 +74,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p examples/demo",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p examples/demo && tsc --noEmit -p examples/custom-vendor",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "format": "oxfmt",

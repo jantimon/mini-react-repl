@@ -6,8 +6,9 @@
  * Output: `src/vendor-default/data.ts` (re-generated each run; gitignored).
  * Subsequent `tsup` build reads it and bakes it into the dist subpath.
  *
- * This is a thin wrapper around `mini-react-repl/vendor-builder`'s
- * `build()` — same code path third parties use via `repl-vendor-build`.
+ * Manifest lives at `src/default-vendor.ts` — same shape end users author
+ * for their own custom vendor (`vendor.ts`).
+ *
  * Imports the `.ts` source directly: requires Node ≥ 22.6 (with
  * --experimental-strip-types) or Node ≥ 23 (default-on).
  */
@@ -20,30 +21,10 @@ import { build } from '../src/vendor-builder/build.ts';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
 
-// User-facing packages. The required core (react, react-dom,
-// react-dom/client, react/jsx-runtime, react/jsx-dev-runtime,
-// react-refresh/runtime) is auto-prepended by build().
-const PACKAGES = ['date-fns', 'dayjs', 'lodash-es'];
-
-// Specifiers we want types for — every package end users actually import.
-// `react-refresh/runtime` is excluded because it's used internally by the
-// iframe runtime, never by user code, and ships no .d.ts anyway.
-const TYPE_PACKAGES = [
-  'react',
-  'react-dom',
-  'react-dom/client',
-  'react/jsx-runtime',
-  'react/jsx-dev-runtime',
-  'date-fns',
-  'dayjs',
-  'lodash-es',
-];
-
 const result = await build({
-  packages: PACKAGES,
+  entry: resolve(root, 'src/default-vendor.ts'),
   format: 'inline',
   types: 'embed',
-  typesPackages: TYPE_PACKAGES,
   nodeEnv: 'development',
   cwd: root,
 });

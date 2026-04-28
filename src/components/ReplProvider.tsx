@@ -19,7 +19,7 @@ import {
   type ReplActionsContextValue,
   type ReplStateContextValue,
 } from './context.ts';
-import type { Files, VendorBundle, ReplError, ReplLoader } from '../types.ts';
+import type { Files, VendorBundle, ReplError, ReplLoader, TypeBundle } from '../types.ts';
 
 export type ReplProviderProps = {
   /** Source of truth for the file table. Required. */
@@ -31,13 +31,24 @@ export type ReplProviderProps = {
    */
   onFilesChange: (next: Files) => void;
   /**
-   * Vendor bundle (import map + optional base URL). Required.
+   * Vendor bundle (import map + optional types). Required.
    *
-   * **Boot-time only.** Snapshotted on first mount. Subsequent identity
-   * changes are ignored (a dev-mode warning fires). To swap vendors, remount
-   * the provider with a `key` prop.
+   * Accepts any of the following so consumers can code-split the payload
+   * with minimal boilerplate:
+   *
+   * - a sync `VendorBundle` (eager)
+   * - a `Promise<{ default: VendorBundle }>` — pass the dynamic import
+   *   e.g.: `import('mini-react-repl/vendor-default')`
+   *   or with a custom vendor bundle: `import('./vendor/repl.vendor.json')`)
+   *
+   * The provider renders nothing until the promise resolves; once resolved
+   * it boots normally.
+   *
+   * **Boot-time only.** Snapshotted on first mount (after promise resolution).
+   * Subsequent identity changes are ignored (a dev-mode warning fires). To
+   * swap vendors, remount the provider with a `key` prop.
    */
-  vendor: VendorBundle;
+  vendor: VendorBundle | PromiseLike<VendorBundle | { default: VendorBundle }>;
   /**
    * Logical path of the entry module. **Boot-time only.** See {@link vendor}.
    * @defaultValue `'App.tsx'`
@@ -59,6 +70,43 @@ export type ReplProviderProps = {
   children?: React.ReactNode;
 };
 
+function isThenable<T>(v: unknown): v is PromiseLike<T> {
+  return v != null && typeof (v as { then?: unknown }).then === 'function';
+}
+
+function unwrapDefault(v: VendorBundle | { default: VendorBundle }): VendorBundle {
+  return 'importMap' in v ? v : v.default;
+}
+
+/**
+ * If the vendor declares a hosted `typesUrl` and no inline `types`, kick off
+ * a fetch and stash the resulting promise in `types`. {@link EditorHost}
+ * already resolves promise-typed `types`, so the editor sees the registered
+ * libs as soon as the network round-trip completes — in parallel to swc-wasm
+ * boot, iframe mount, and Monaco initialization.
+ */
+function applyTypesUrl(v: VendorBundle): VendorBundle {
+  if (v.types !== undefined || v.typesUrl === undefined) return v;
+  const url = v.typesUrl;
+  return {
+    ...v,
+    types: fetch(url)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json() as Promise<TypeBundle>;
+      })
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[mini-react-repl] failed to load vendor types from '${url}': ${
+            err instanceof Error ? err.message : String(err)
+          }. Editor will boot without vendor type info.`,
+        );
+        return { libs: [] };
+      }),
+  };
+}
+
 /**
  * Wrap your editor + preview composition in this. Provides
  * {@link useRepl} and shared context to {@link ReplFileTabs},
@@ -73,7 +121,35 @@ export type ReplProviderProps = {
  * </ReplProvider>
  * ```
  */
-export function ReplProvider(props: ReplProviderProps): React.ReactElement {
+export function ReplProvider(props: ReplProviderProps): React.ReactElement | null {
+  const vendorProp = props.vendor;
+  const [resolvedVendor, setResolvedVendor] = useState<VendorBundle | undefined>(() =>
+    isThenable<VendorBundle | { default: VendorBundle }>(vendorProp)
+      ? undefined
+      : applyTypesUrl(vendorProp),
+  );
+
+  useEffect(() => {
+    if (!isThenable<VendorBundle | { default: VendorBundle }>(vendorProp)) {
+      setResolvedVendor(applyTypesUrl(vendorProp));
+      return;
+    }
+    let cancelled = false;
+    vendorProp.then((v) => {
+      if (!cancelled) setResolvedVendor(applyTypesUrl(unwrapDefault(v)));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [vendorProp]);
+
+  if (!resolvedVendor) return null;
+  return <ReplProviderInner {...props} vendor={resolvedVendor} />;
+}
+
+type ReplProviderInnerProps = Omit<ReplProviderProps, 'vendor'> & { vendor: VendorBundle };
+
+function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
   // Boot config is snapshotted on first render. Subsequent prop changes are
   // ignored (with a dev-mode warning) because changing them post-mount would
   // require a full iframe + swc-wasm reboot.

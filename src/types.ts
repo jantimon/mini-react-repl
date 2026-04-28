@@ -28,10 +28,31 @@ export type VendorBundle = {
    * consume this to provide red squiggles and hover signatures for the
    * vendor packages. Editors that don't support it ignore the field.
    *
-   * Produced by `mini-react-repl/vendor-builder` with `types: 'embed'`.
-   * The default vendor ships with this populated for the curated set.
+   * Accepts a sync `TypeBundle`, a `Promise<TypeBundle>`, or a JSON-import
+   * result (`{ default: TypeBundle }`). For custom-vendor builds the CLI
+   * writes the payload to `<outDir>/repl.types.json` and embeds the URL as
+   * {@link typesUrl}; the library fetches it automatically, so consumers
+   * normally leave this field unset.
+   *
+   * The default vendor ships with this populated inline.
    */
-  types?: TypeBundle;
+  types?: TypeBundle | PromiseLike<TypeBundle | { default: TypeBundle }>;
+  /**
+   * Optional URL of a hosted `repl.types.json`. When set and {@link types}
+   * is unset, the library fetches and registers the payload automatically.
+   *
+   * Emitted by `repl-vendor-build` into the bundler-imported import-map
+   * JSON, so:
+   *
+   * ```tsx
+   * import vendor from './vendor/repl.vendor.json';
+   * <Repl vendor={vendor} ... />
+   * ```
+   *
+   * is enough — types load in parallel without any consumer-side fetch.
+   * Override by setting `types` directly.
+   */
+  typesUrl?: string;
 };
 
 /**
