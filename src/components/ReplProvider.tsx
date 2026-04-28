@@ -282,6 +282,7 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
     ? controlledActivePath
     : internalActivePath;
   const [lastError, setLastError] = useState<ReplError | null>(null);
+  const [previewReloadKey, setPreviewReloadKey] = useState(0);
 
   // Latest-prop refs let us build CRUD callbacks once with stable identity.
   // The documented `useRepl` contract promises stable callbacks — putting
@@ -311,6 +312,11 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
     const next = { ...filesRef.current };
     delete next[path];
     onFilesChangeRef.current(next);
+  }, []);
+
+  const reloadPreview = useCallback(() => {
+    setLastError(null);
+    setPreviewReloadKey((k) => k + 1);
   }, []);
 
   const renameFile = useCallback((oldPath: string, newPath: string) => {
@@ -344,9 +350,10 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
       setFile,
       removeFile,
       renameFile,
+      reloadPreview,
       setLastError,
     }),
-    [bootConfig, setActivePath, setFile, removeFile, renameFile],
+    [bootConfig, setActivePath, setFile, removeFile, renameFile, reloadPreview],
   );
 
   const state = useMemo<ReplStateContextValue>(
@@ -354,8 +361,9 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
       files: props.files,
       activePath,
       lastError,
+      previewReloadKey,
     }),
-    [props.files, activePath, lastError],
+    [props.files, activePath, lastError, previewReloadKey],
   );
 
   return (

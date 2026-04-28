@@ -252,6 +252,12 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
   return (
     <div className={`repl-preview ${props.className ?? ''}`} style={props.style}>
       <iframe
+        // `previewReloadKey` is bumped by `reloadPreview()` from `useRepl()`.
+        // Changing the key forces React to unmount the iframe element and
+        // mount a fresh one, which tears down the old TransformClient via
+        // `setupIframe`'s cleanup and runs the cold-boot path again — the
+        // recovery hatch when user code crashes past what HMR can rescue.
+        key={state.previewReloadKey}
         ref={setupIframe}
         className="repl-iframe"
         srcDoc={srcdoc}

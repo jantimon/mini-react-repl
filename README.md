@@ -188,12 +188,14 @@ the provider with a different `key`.
 ### `useRepl()`
 
 ```ts
-const { files, setFile, removeFile, renameFile } = useRepl();
+const { files, setFile, removeFile, renameFile, activePath, setActivePath, reloadPreview } =
+  useRepl();
 ```
 
-That's it. No `errors`, no `forceRefresh`, no `getPreviewIframe`. By design.
-errors come through `onPreviewError`. if you need an imperative reset, change
-the `key` prop on `<ReplPreview/>`.
+That's it. No `errors`, no `forceRefresh`, no `getPreviewIframe`. By design —
+errors come through `onPreviewError`. `reloadPreview()` is the recovery hatch
+when user code crashes past what Fast Refresh can handle (empty entry file,
+top-level throw): it remounts the iframe and re-runs every transform.
 
 ### Headless layout
 

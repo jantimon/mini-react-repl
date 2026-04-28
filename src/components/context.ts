@@ -31,6 +31,14 @@ export type ReplStateContextValue = {
   activePath: string | null;
   /** The most recent error, or null if cleared. */
   lastError: ReplError | null;
+  /**
+   * Monotonic counter bumped by {@link ReplActionsContextValue.reloadPreview}.
+   * `<ReplPreview/>` reads it as the iframe's `key` so a bump forces a full
+   * unmount/remount → fresh `TransformClient` and cold boot.
+   *
+   * @internal
+   */
+  previewReloadKey: number;
 };
 
 export type ReplActionsContextValue = {
@@ -61,6 +69,14 @@ export type ReplActionsContextValue = {
   setFile: (path: string, source: string) => void;
   removeFile: (path: string) => void;
   renameFile: (oldPath: string, newPath: string) => void;
+  /**
+   * Force a full cold boot of the preview iframe — drops the current
+   * `TransformClient`, remounts the iframe, and re-runs every transform.
+   * Use it as a recovery hatch when user code crashes the runtime past
+   * what HMR can rescue (e.g. an empty entry file, a top-level throw).
+   * Also clears {@link ReplStateContextValue.lastError}.
+   */
+  reloadPreview: () => void;
 
   /** Internal — `<ReplPreview/>` flushes errors here for `useRepl()` consumers. */
   setLastError: (err: ReplError | null) => void;
