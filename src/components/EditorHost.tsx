@@ -5,10 +5,10 @@
  * @internal
  */
 
-import { useCallback, useContext, useEffect, useState } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { ReplActionsContext, ReplStateContext } from './context.ts';
 import { languageFor } from '../engine/path-utils.ts';
-import type { ReplEditorComponent, TypeBundle } from '../types.ts';
+import type { LanguageMap, ReplEditorComponent, TypeBundle } from '../types.ts';
 
 export type EditorHostProps = {
   editor: ReplEditorComponent;
@@ -22,6 +22,19 @@ function isResolvedTypes(v: unknown): v is TypeBundle {
 
 function unwrapTypesDefault(v: TypeBundle | { default: TypeBundle }): TypeBundle {
   return isResolvedTypes(v) ? v : v.default;
+}
+
+function extensionOf(path: string): string {
+  const dot = path.lastIndexOf('.');
+  return dot < 0 ? '' : path.slice(dot + 1);
+}
+
+function resolveLanguage(path: string, custom: LanguageMap | undefined): string {
+  if (custom) {
+    const hit = typeof custom === 'function' ? custom(path) : custom[extensionOf(path)];
+    if (hit) return hit;
+  }
+  return languageFor(path);
 }
 
 export function EditorHost(props: EditorHostProps): React.ReactElement | null {
@@ -67,6 +80,12 @@ export function EditorHost(props: EditorHostProps): React.ReactElement | null {
     [path, setFile],
   );
 
+  // languages is documented boot-time but ref-stored anyway so identity
+  // churn (consumers passing inline records) doesn't matter and any late
+  // change still applies on the next active-file swap.
+  const languagesRef = useRef(actions.languages);
+  languagesRef.current = actions.languages;
+
   if (!path) return null;
   const value = state.files[path] ?? '';
   const Editor = props.editor;
@@ -77,7 +96,7 @@ export function EditorHost(props: EditorHostProps): React.ReactElement | null {
       <Editor
         path={path}
         value={value}
-        language={languageFor(path)}
+        language={resolveLanguage(path, languagesRef.current)}
         onChange={onChange}
         files={state.files}
         {...(types ? { types } : {})}

@@ -3,26 +3,13 @@ import {
   Repl,
   defaultLoader,
   type Files,
-  type ReplEditorProps,
   type ReplLoader,
+  type TypeBundle,
   type VendorBundle,
 } from 'mini-react-repl';
 import { defaultVendor } from 'mini-react-repl/vendor-default';
 import { MonacoReplEditor } from 'mini-react-repl/editor-monaco';
 import 'mini-react-repl/theme.css';
-
-// Wrap MonacoReplEditor so .md files use Monaco's bundled markdown grammar
-// instead of falling back to TypeScript syntax highlighting. The host
-// instantiates the editor itself, so wrapping it is the standard way to
-// pre-configure Monaco-only props.
-function ReplEditor(props: ReplEditorProps) {
-  return (
-    <MonacoReplEditor
-      {...props}
-      languageFor={(path) => (path.endsWith('.md') ? 'markdown' : undefined)}
-    />
-  );
-}
 
 // Teach Monaco's TypeScript service what `import x from './foo.md'` means.
 // Without this it reports TS2307 ("Cannot find module") on every loader-
@@ -39,11 +26,16 @@ const LOADER_AMBIENT_TYPES = `
   }
 `;
 
+// `vendor.types` is typed as `TypeBundle | PromiseLike<...>` since custom
+// vendors may resolve types asynchronously. The default vendor inlines them
+// synchronously, so we narrow before merging.
+const baseTypes = defaultVendor.types as TypeBundle | undefined;
+
 const vendor: VendorBundle = {
   ...defaultVendor,
   types: {
     libs: [
-      ...(defaultVendor.types?.libs ?? []),
+      ...(baseTypes?.libs ?? []),
       { path: 'file:///loader-ambient.d.ts', content: LOADER_AMBIENT_TYPES },
     ],
   },
@@ -110,8 +102,9 @@ export function App() {
       files={files}
       onFilesChange={setFiles}
       vendor={vendor}
-      editor={ReplEditor}
+      editor={MonacoReplEditor}
       loader={loader}
+      languages={{ md: 'markdown' }}
     />
   );
 }

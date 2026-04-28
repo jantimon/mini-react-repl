@@ -21,6 +21,7 @@ import {
 } from './context.ts';
 import type {
   Files,
+  LanguageMap,
   VendorBundle,
   ReplError,
   ReplLoader,
@@ -37,6 +38,29 @@ export type ReplProviderProps = {
    * expensive work (IDB writes, server sync, history snapshots).
    */
   onFilesChange: (next: Files) => void;
+  /**
+   * Controlled active-file selection. When defined (including `null`), the
+   * provider stops managing the active path internally; {@link onActivePathChange}
+   * fires on every change request and your handler decides whether to apply it
+   * by updating this prop. Mutually exclusive with {@link defaultActivePath}.
+   *
+   * Use this to sync the selection with a router, persist it across reloads,
+   * or coordinate multiple panes.
+   */
+  activePath?: string | null;
+  /**
+   * Called whenever the active path *would* change.
+   *
+   * - **Controlled mode** ({@link activePath} is provided): your callback
+   *   decides whether to apply the new value by updating `activePath`. The
+   *   provider does not move the selection until you do.
+   * - **Uncontrolled mode**: the provider has already moved the selection;
+   *   the callback is informational (URL sync, telemetry, etc.).
+   *
+   * Fires for tab clicks, the "+" button, the post-delete fallback, and the
+   * auto-shift after a rename of the currently active file.
+   */
+  onActivePathChange?: (next: string | null) => void;
   /**
    * Vendor bundle (import map + optional types). Required.
    *
@@ -85,7 +109,29 @@ export type ReplProviderProps = {
    * with a `console.error` for now.
    */
   virtualModules?: VirtualModules;
-  /** Initial selected file. Defaults to `entry`. */
+  /**
+   * Map a file path to an editor language id. Pair with a custom
+   * {@link loader} to teach the editor about file types it doesn't
+   * recognize — e.g. `.md` → `'markdown'`, `.json` → `'json'`.
+   *
+   * Accepts a record keyed by extension (no leading dot) or a function:
+   *
+   * ```tsx
+   * <Repl languages={{ md: 'markdown', json: 'json' }} ... />
+   * <Repl languages={(path) => path.endsWith('.svg') ? 'xml' : undefined} ... />
+   * ```
+   *
+   * Falls back to the built-in dispatch (`.css` → `'css'`, `.js`/`.jsx`/
+   * `.mjs` → `'javascript'`, everything else → `'typescript'`) for
+   * unknown extensions / `undefined` returns. The host stores the value
+   * in a ref and consults it on every active-file change; mappings are
+   * not expected to change at runtime, but identity changes are tolerated.
+   */
+  languages?: LanguageMap;
+  /**
+   * Initial selected file in uncontrolled mode. Ignored when
+   * {@link activePath} is provided. Defaults to {@link entry}.
+   */
   defaultActivePath?: string;
   children?: React.ReactNode;
 };
@@ -196,6 +242,7 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
     loader: props.loader,
     virtualModulesProp: props.virtualModules,
     virtualModules: normalizeVirtualModules(props.virtualModules ?? {}),
+    languages: props.languages,
   }));
 
   if (process.env.NODE_ENV !== 'production') {
@@ -214,19 +261,26 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
       if (props.swcWasmUrl !== bootConfig.swcWasmUrl) warn('swcWasmUrl');
       if (props.loader !== bootConfig.loader) warn('loader');
       if (props.virtualModules !== bootConfig.virtualModulesProp) warn('virtualModules');
+      if (props.languages !== bootConfig.languages) warn('languages');
     }, [
       props.entry,
       props.vendor,
       props.swcWasmUrl,
       props.loader,
       props.virtualModules,
+      props.languages,
       bootConfig,
     ]);
   }
 
-  const [activePath, setActivePath] = useState<string | null>(
+  const controlledActivePath = props.activePath;
+  const isControlledActivePath = controlledActivePath !== undefined;
+  const [internalActivePath, setInternalActivePath] = useState<string | null>(
     props.defaultActivePath ?? bootConfig.entry,
   );
+  const activePath: string | null = isControlledActivePath
+    ? controlledActivePath
+    : internalActivePath;
   const [lastError, setLastError] = useState<ReplError | null>(null);
 
   // Latest-prop refs let us build CRUD callbacks once with stable identity.
@@ -236,6 +290,18 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
   filesRef.current = props.files;
   const onFilesChangeRef = useRef(props.onFilesChange);
   onFilesChangeRef.current = props.onFilesChange;
+  const activePathRef = useRef(activePath);
+  activePathRef.current = activePath;
+  const isControlledActivePathRef = useRef(isControlledActivePath);
+  isControlledActivePathRef.current = isControlledActivePath;
+  const onActivePathChangeRef = useRef(props.onActivePathChange);
+  onActivePathChangeRef.current = props.onActivePathChange;
+
+  const setActivePath = useCallback((path: string) => {
+    if (activePathRef.current === path) return;
+    if (!isControlledActivePathRef.current) setInternalActivePath(path);
+    onActivePathChangeRef.current?.(path);
+  }, []);
 
   const setFile = useCallback((path: string, source: string) => {
     onFilesChangeRef.current({ ...filesRef.current, [path]: source });
@@ -258,7 +324,10 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
       next[k === oldPath ? newPath : k] = v;
     }
     onFilesChangeRef.current(next);
-    setActivePath((prev) => (prev === oldPath ? newPath : prev));
+    if (activePathRef.current === oldPath) {
+      if (!isControlledActivePathRef.current) setInternalActivePath(newPath);
+      onActivePathChangeRef.current?.(newPath);
+    }
   }, []);
 
   // Actions context — stable for the provider's lifetime. Consumers that
@@ -270,13 +339,14 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
       swcWasmUrl: bootConfig.swcWasmUrl,
       loader: bootConfig.loader,
       virtualModules: bootConfig.virtualModules,
+      languages: bootConfig.languages,
       setActivePath,
       setFile,
       removeFile,
       renameFile,
       setLastError,
     }),
-    [bootConfig, setFile, removeFile, renameFile],
+    [bootConfig, setActivePath, setFile, removeFile, renameFile],
   );
 
   const state = useMemo<ReplStateContextValue>(

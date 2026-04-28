@@ -84,6 +84,31 @@ export type ImportMap = {
 export type Files = Record<string, string>;
 
 /**
+ * Map of file extension to editor language id, or a function from path to id.
+ *
+ * Tells editor adapters (e.g. {@link https://www.npmjs.com/package/monaco-editor | Monaco})
+ * how to syntax-highlight files served by a custom {@link ReplLoader} — e.g.
+ * `.md` → `'markdown'`, `.json` → `'json'`. Adapters that don't consume the
+ * `language` prop ignore this.
+ *
+ * Record keys are extensions **without** the leading dot (`'md'`, not
+ * `'.md'`). Lookup falls back to the built-in dispatch for unknown
+ * extensions: `.css` → `'css'`, `.js`/`.jsx`/`.mjs` → `'javascript'`,
+ * everything else → `'typescript'`.
+ *
+ * @example
+ * ```tsx
+ * <Repl languages={{ md: 'markdown', json: 'json' }} ... />
+ * ```
+ *
+ * @example
+ * ```tsx
+ * <Repl languages={(path) => path.endsWith('.svg') ? 'xml' : undefined} ... />
+ * ```
+ */
+export type LanguageMap = Record<string, string> | ((path: string) => string | undefined);
+
+/**
  * Inline modules exposed to the iframe under bare-specifier aliases.
  *
  * Each `key` is the import specifier user code may use (e.g. `'@app/util'`,
@@ -130,8 +155,16 @@ export type ReplEditorProps = {
   value: string;
   /** Called on every change. The library handles its own debouncing internally. */
   onChange: (next: string) => void;
-  /** Editor language hint derived from the file extension. */
-  language: 'typescript' | 'javascript' | 'css';
+  /**
+   * Editor language id for the active file. Resolved by the host from the
+   * consumer's `languages` prop (if provided) and the built-in dispatch
+   * (`.css` → `'css'`, `.js`/`.jsx`/`.mjs` → `'javascript'`, everything
+   * else → `'typescript'`).
+   *
+   * Adapters with a syntax-highlighter (e.g. Monaco) should use this to
+   * pick the grammar; adapters without one can ignore it.
+   */
+  language: string;
   /**
    * Optional vendor `.d.ts` payload the editor may register with its
    * TypeScript service. Forwarded from `vendor.types` by the host. Editors

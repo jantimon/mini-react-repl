@@ -34,6 +34,10 @@ export type UseReplReturn = {
    * @throws if `newPath` collides with an existing file
    */
   renameFile: (oldPath: string, newPath: string) => void;
+  /** Currently selected file path in the editor. */
+  activePath: string | null;
+  /** Set the active file in the editor. No-op if the path doesn't exist. */
+  setActivePath: (path: string) => void;
 };
 
 export function useRepl(): UseReplReturn {
@@ -43,8 +47,10 @@ export function useRepl(): UseReplReturn {
     throw new Error('useRepl must be used inside a <ReplProvider/>');
   }
   return {
+    activePath: state.activePath,
     files: state.files,
     setFile: actions.setFile,
+    setActivePath: actions.setActivePath,
     removeFile: actions.removeFile,
     renameFile: actions.renameFile,
   };

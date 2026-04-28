@@ -12,6 +12,7 @@
 
 @layer mini-react-repl {
   .repl-root {
+    color-scheme: var(--repl-color-scheme, light dark);
     display: grid;
     grid-template-columns: minmax(280px, 1fr) minmax(280px, 1fr);
     gap: 0;

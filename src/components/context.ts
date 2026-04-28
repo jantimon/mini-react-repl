@@ -15,7 +15,14 @@
  */
 
 import { createContext } from 'react';
-import type { Files, VendorBundle, ReplError, ReplLoader, VirtualModules } from '../types.ts';
+import type {
+  Files,
+  LanguageMap,
+  VendorBundle,
+  ReplError,
+  ReplLoader,
+  VirtualModules,
+} from '../types.ts';
 
 export type ReplStateContextValue = {
   /** Current file table (mirrors the consumer's `files` prop). */
@@ -43,6 +50,12 @@ export type ReplActionsContextValue = {
    * internally.
    */
   virtualModules: VirtualModules;
+  /**
+   * Optional consumer-provided extension → editor-language-id mapping.
+   * Snapshotted on first mount. {@link EditorHost} consults this before
+   * the built-in extension dispatch.
+   */
+  languages: LanguageMap | undefined;
 
   setActivePath: (path: string) => void;
   setFile: (path: string, source: string) => void;

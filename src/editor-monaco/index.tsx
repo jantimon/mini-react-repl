@@ -39,6 +39,7 @@
 import { useEffect, useRef } from 'react';
 import * as monaco from 'monaco-editor';
 import type { ReplEditorProps, TypeBundle } from '../types.ts';
+import { ColorSchemeWatcher } from '../ColorSchemeWatcher.tsx';
 
 // Module-scope so it runs exactly once on first import, before any editor
 // mounts. Guarded so consumers that wire their own workers (custom CDN paths,
@@ -66,7 +67,14 @@ if (typeof self !== 'undefined' && !self.MonacoEnvironment) {
 }
 
 export type MonacoReplEditorProps = ReplEditorProps & {
-  /** Monaco theme. @defaultValue `'vs-dark'` if `prefers-color-scheme: dark`, else `'vs'` */
+  /**
+   * Monaco theme. When omitted, the adapter tracks the cascade reactively
+   * via {@link ColorSchemeWatcher} (`vs-dark` for dark, `vs` for light) so
+   * the editor follows OS appearance toggles live. Pass an explicit value
+   * to opt out — the auto-switching watcher is not rendered in that case.
+   *
+   * @defaultValue tracks `color-scheme`
+   */
   theme?: string;
   /** Pass-through to monaco's `IStandaloneEditorConstructionOptions`. */
   options?: monaco.editor.IStandaloneEditorConstructionOptions;
@@ -86,30 +94,6 @@ export type MonacoReplEditorProps = ReplEditorProps & {
    * semantic validation. **Boot-time only.** See {@link compilerOptions}.
    */
   diagnosticsOptions?: monaco.typescript.DiagnosticsOptions;
-  /**
-   * Map a file path to a Monaco language ID. Consulted before the built-in
-   * extension dispatch (`.css` → `css`, `.js`/`.jsx`/`.mjs` → `javascript`,
-   * everything else → `typescript`). Return `undefined` for paths the
-   * default dispatch should still handle.
-   *
-   * Use this for files served by a custom {@link ReplLoader} — e.g. map
-   * `.md` to `'markdown'` for Monaco's bundled markdown grammar.
-   *
-   * @example
-   * ```tsx
-   * const MyMonaco = (props: ReplEditorProps) => (
-   *   <MonacoReplEditor
-   *     {...props}
-   *     languageFor={(path) =>
-   *       path.endsWith('.md') ? 'markdown'
-   *       : path.endsWith('.json') ? 'json'
-   *       : undefined
-   *     }
-   *   />
-   * );
-   * ```
-   */
-  languageFor?: (path: string) => string | undefined;
   className?: string;
   style?: React.CSSProperties;
 };
@@ -241,21 +225,6 @@ function tsDiagnosticToMarker(
   };
 }
 
-function defaultLanguageForPath(path: string): string {
-  if (path.endsWith('.css')) return 'css';
-  if (path.endsWith('.js') || path.endsWith('.jsx') || path.endsWith('.mjs')) {
-    return 'javascript';
-  }
-  return 'typescript';
-}
-
-function resolveLanguage(
-  path: string,
-  custom: ((p: string) => string | undefined) | undefined,
-): string {
-  return custom?.(path) ?? defaultLanguageForPath(path);
-}
-
 /**
  * Headless-spec editor adapter. Mounts a Monaco editor and bridges
  * `value` / `onChange` to the host's controlled state.
@@ -266,12 +235,6 @@ export function MonacoReplEditor(props: MonacoReplEditorProps): React.ReactEleme
   const modelsRef = useRef(new Map<string, monaco.editor.ITextModel>());
   const onChangeRef = useRef(props.onChange);
   onChangeRef.current = props.onChange;
-  // languageFor is consulted inside effects keyed on `files` / `path`. Capture
-  // it in a ref so identity changes don't churn models — Monaco can't change
-  // a model's language post-creation anyway, so changes only take effect on
-  // the next add/swap.
-  const languageForRef = useRef(props.languageFor);
-  languageForRef.current = props.languageFor;
   // Generation counter so a slow worker round-trip from a previous sync
   // can't overwrite markers from a later one.
   const refreshGenRef = useRef(0);
@@ -295,9 +258,12 @@ export function MonacoReplEditor(props: MonacoReplEditorProps): React.ReactEleme
       ...diagnosticsOptionsRef.current,
     });
 
-    const theme =
-      props.theme ??
-      (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'vs-dark' : 'vs');
+    // When `props.theme` is undefined, the `<ColorSchemeWatcher>` rendered
+    // below has already fired its initial `onChange` during the ref pass
+    // (refs run before effects, children before parents), and that handler
+    // calls `monaco.editor.setTheme` — global state every newly-created
+    // editor consumes. So we omit `theme` here and let the just-set global
+    // win, instead of doing a parallel synchronous read.
     const editor = monaco.editor.create(containerRef.current, {
       automaticLayout: true,
       tabSize: 2,
@@ -306,7 +272,7 @@ export function MonacoReplEditor(props: MonacoReplEditorProps): React.ReactEleme
       fontSize: 13,
       lineNumbers: 'on',
       renderLineHighlight: 'all',
-      theme,
+      ...(props.theme !== undefined && { theme: props.theme }),
       // JSX in Monaco uses the standard `typescript` language; richer
       // coloring (intrinsic vs. component tags, parameters, types) comes
       // from the TS worker's semantic-token provider, which is off by
@@ -381,11 +347,16 @@ export function MonacoReplEditor(props: MonacoReplEditorProps): React.ReactEleme
       let model = modelsRef.current.get(path);
       if (!model) {
         const uri = monaco.Uri.parse(`file:///workspace/${path}`);
-        model = monaco.editor.createModel(
-          content,
-          resolveLanguage(path, languageForRef.current),
-          uri,
-        );
+        // Pre-created models exist so Monaco's TS service can see cross-file
+        // imports — display only happens once `path` makes one active. We
+        // know the language for the active file (`props.language`, resolved
+        // by the host); for the rest we hand Monaco the URI and let its
+        // built-in extension registry pick (which is correct for `.ts`,
+        // `.tsx`, `.css`, `.md`, etc.). The active model's language is
+        // re-asserted in the path-swap effect below in case URI inference
+        // disagreed with the host.
+        const lang = path === props.path ? props.language : undefined;
+        model = monaco.editor.createModel(content, lang, uri);
         modelsRef.current.set(path, model);
       } else if (path !== props.path && model.getValue() !== content) {
         model.setValue(content);
@@ -423,12 +394,12 @@ export function MonacoReplEditor(props: MonacoReplEditorProps): React.ReactEleme
       // Without `file:`, `import 'date-fns'` resolves to nothing; the nested
       // dir avoids root-path collisions with Monaco's own lib models.
       const uri = monaco.Uri.parse(`file:///workspace/${props.path}`);
-      model = monaco.editor.createModel(
-        props.value,
-        resolveLanguage(props.path, languageForRef.current),
-        uri,
-      );
+      model = monaco.editor.createModel(props.value, props.language, uri);
       modelsRef.current.set(props.path, model);
+    } else if (model.getLanguageId() !== props.language) {
+      // The model may have been pre-created (URI inference) before becoming
+      // active, or the host may have remapped the extension since.
+      monaco.editor.setModelLanguage(model, props.language);
     }
 
     if (editor.getModel() !== model) {
@@ -444,10 +415,23 @@ export function MonacoReplEditor(props: MonacoReplEditorProps): React.ReactEleme
   }, [props.path, props.value, props.language]);
 
   return (
-    <div
-      ref={containerRef}
-      className={`repl-editor-monaco ${props.className ?? ''}`}
-      style={{ width: '100%', height: '100%', ...props.style }}
-    />
+    <>
+      <div
+        ref={containerRef}
+        className={`repl-editor-monaco ${props.className ?? ''}`}
+        style={{ width: '100%', height: '100%', ...props.style }}
+      ></div>
+      {props.theme === undefined && (
+        <ColorSchemeWatcher
+          onChange={(scheme) => {
+            // `monaco.editor.setTheme` is global Monaco state — it restyles
+            // every live editor on the page. That's the right behavior for
+            // a cascade-driven default; consumers wanting per-editor pinning
+            // pass `theme` explicitly, which skips this watcher entirely.
+            monaco.editor.setTheme(scheme === 'dark' ? 'vs-dark' : 'vs');
+          }}
+        />
+      )}
+    </>
   );
 }

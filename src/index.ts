@@ -20,6 +20,11 @@ export { ReplPreview, type ReplPreviewProps } from './components/ReplPreview.tsx
 export { ReplFileTabs, type ReplFileTabsProps } from './components/ReplFileTabs.tsx';
 export { ReplErrorOverlay, type ReplErrorOverlayProps } from './components/ReplErrorOverlay.tsx';
 export { EditorHost, type EditorHostProps } from './components/EditorHost.tsx';
+export {
+  ColorSchemeWatcher,
+  type ColorScheme,
+  type ColorSchemeWatcherProps,
+} from './ColorSchemeWatcher.tsx';
 export { useRepl, type UseReplReturn } from './hooks/useRepl.ts';
 export { defaultLoader } from './engine/default-loader.ts';
 export type {
@@ -27,6 +32,7 @@ export type {
   VendorBundle,
   VirtualModules,
   ImportMap,
+  LanguageMap,
   ReplError,
   ReplEditorProps,
   ReplEditorComponent,
