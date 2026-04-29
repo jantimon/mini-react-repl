@@ -110,6 +110,24 @@ export type ReplProviderProps = {
    */
   virtualModules?: VirtualModules;
   /**
+   * TSX source for the synthetic root component the iframe mounts (the
+   * "shell"). Use this to wrap user code in a `<Suspense>` boundary, error
+   * boundary, theme provider, etc., without forcing the consumer to author
+   * (or know about) the wrapping in their own files.
+   *
+   * If omitted, the library generates a pass-through shell that simply
+   * renders the entry component — visually identical to today's behavior.
+   *
+   * The string is compiled with the same swc pipeline as user files and
+   * injected as `ReplShell.tsx` in the engine's file table. It can do
+   * relative imports against user files (e.g. `import App from './App'`)
+   * and bare imports through the import map. Drop a `ReplShell.tsx` into
+   * `files` directly to take over from this prop and edit the shell live.
+   *
+   * **Boot-time only.** See {@link vendor}.
+   */
+  shell?: string;
+  /**
    * Map a file path to an editor language id. Pair with a custom
    * {@link loader} to teach the editor about file types it doesn't
    * recognize — e.g. `.md` → `'markdown'`, `.json` → `'json'`.
@@ -242,6 +260,7 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
     loader: props.loader,
     virtualModulesProp: props.virtualModules,
     virtualModules: normalizeVirtualModules(props.virtualModules ?? {}),
+    shell: props.shell,
     languages: props.languages,
   }));
 
@@ -261,6 +280,7 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
       if (props.swcWasmUrl !== bootConfig.swcWasmUrl) warn('swcWasmUrl');
       if (props.loader !== bootConfig.loader) warn('loader');
       if (props.virtualModules !== bootConfig.virtualModulesProp) warn('virtualModules');
+      if (props.shell !== bootConfig.shell) warn('shell');
       if (props.languages !== bootConfig.languages) warn('languages');
     }, [
       props.entry,
@@ -268,6 +288,7 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
       props.swcWasmUrl,
       props.loader,
       props.virtualModules,
+      props.shell,
       props.languages,
       bootConfig,
     ]);
@@ -345,6 +366,7 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
       swcWasmUrl: bootConfig.swcWasmUrl,
       loader: bootConfig.loader,
       virtualModules: bootConfig.virtualModules,
+      shell: bootConfig.shell,
       languages: bootConfig.languages,
       setActivePath,
       setFile,

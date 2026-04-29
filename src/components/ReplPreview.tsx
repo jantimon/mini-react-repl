@@ -26,6 +26,7 @@ import {
 } from '../engine/transform-client.ts';
 import type { ToIframe, FromIframe } from '../runtime/protocol.ts';
 import type { ReplError } from '../types.ts';
+import { SHELL_PATH, withShellFile } from './shell.ts';
 
 export type ReplPreviewProps = {
   headHtml?: string;
@@ -51,8 +52,23 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
   const actions = useContext(ReplActionsContext);
   if (!state || !actions) throw new Error('<ReplPreview/> must be inside <ReplProvider/>');
 
-  const filesRef = useRef(state.files);
-  filesRef.current = state.files;
+  const setLastError = actions.setLastError;
+  const entry = actions.entry;
+  const swcWasmUrl = actions.swcWasmUrl;
+  const loader = actions.loader;
+  const virtualModulesRaw = actions.virtualModules;
+  const customShell = actions.shell;
+
+  // The iframe runtime mounts a synthetic shell module — never the user's
+  // entry directly. `filesForEngine` is the engine-side file table (user
+  // files + injected `ReplShell.tsx`); `state.files` stays user-owned, so
+  // tabs / Monaco / consumers see only what the consumer passed in.
+  const filesForEngine = useMemo(
+    () => withShellFile(state.files, entry, customShell),
+    [state.files, entry, customShell],
+  );
+  const filesForEngineRef = useRef(filesForEngine);
+  filesForEngineRef.current = filesForEngine;
 
   const showOverlay = props.showPreviewErrorOverlay !== false;
   const onErrorRef = useRef(props.onPreviewError);
@@ -86,12 +102,6 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
       }),
     [actions.vendor, props.headHtml, props.bodyHtml, showOverlay],
   );
-
-  const setLastError = actions.setLastError;
-  const entry = actions.entry;
-  const swcWasmUrl = actions.swcWasmUrl;
-  const loader = actions.loader;
-  const virtualModulesRaw = actions.virtualModules;
 
   // React 19 callback ref with cleanup. When `srcdoc` (or any dep) changes,
   // React fires the previous ref's cleanup (disposes the client + listener)
@@ -202,7 +212,7 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
           try {
             // record current files without scheduling per-file transforms;
             // transformAll() does the work in topological order.
-            client.setFiles(filesRef.current);
+            client.setFiles(filesForEngineRef.current);
             await client.transformAll();
             if (disposed) return;
             booted = true;
@@ -210,7 +220,10 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
               {
                 __repl: true,
                 kind: 'boot',
-                entry,
+                // The runtime entry is always the synthetic shell — never the
+                // user-facing entry. The shell imports the latter (or whatever
+                // a custom shell composes) and is what `root.render(...)` mounts.
+                entry: SHELL_PATH,
                 modules: collected.slice(),
                 cssFiles: collectedCss.slice(),
               } satisfies ToIframe & { __repl: true },
@@ -245,9 +258,11 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
 
   // Forward file changes into the live transform client. Waits until the
   // boot message has flushed so we don't double-process the cold set.
+  // `filesForEngine` already wraps `state.files` with the synthetic shell, so
+  // it changes on user edits and (defensively) on shell-source changes too.
   useEffect(() => {
-    clientRef.current?.syncFiles(state.files);
-  }, [state.files]);
+    clientRef.current?.syncFiles(filesForEngine);
+  }, [filesForEngine]);
 
   return (
     <div className={`repl-preview ${props.className ?? ''}`} style={props.style}>

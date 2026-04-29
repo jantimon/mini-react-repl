@@ -59,6 +59,13 @@ export type ReplActionsContextValue = {
    */
   virtualModules: VirtualModules;
   /**
+   * Optional consumer-provided shell source. Snapshotted on first mount.
+   * `<ReplPreview/>` injects this (or a generated default) as the synthetic
+   * `ReplShell.tsx` file the iframe actually mounts. `undefined` means use
+   * the default. See {@link ReplProviderProps.shell}.
+   */
+  shell: string | undefined;
+  /**
    * Optional consumer-provided extension → editor-language-id mapping.
    * Snapshotted on first mount. {@link EditorHost} consults this before
    * the built-in extension dispatch.
