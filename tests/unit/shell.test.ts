@@ -57,4 +57,47 @@ describe('shell', () => {
       expect(out[SHELL_PATH]).toContain(`from './Main'`);
     });
   });
+
+  describe('withShellFile entry fallback', () => {
+    it('injects a no-op entry stub when the entry key is missing', () => {
+      const out = withShellFile({}, 'App.tsx', undefined);
+      expect(out['App.tsx']).toBeDefined();
+      expect(out['App.tsx']).toContain('export default function App()');
+      expect(out['App.tsx']).toContain('return null');
+    });
+
+    it('injects the stub when the entry source is empty', () => {
+      const out = withShellFile({ 'App.tsx': '' }, 'App.tsx', undefined);
+      expect(out['App.tsx']).toContain('export default function App()');
+    });
+
+    it('injects the stub when the entry source is whitespace-only', () => {
+      const out = withShellFile({ 'App.tsx': '   \n\t' }, 'App.tsx', undefined);
+      expect(out['App.tsx']).toContain('export default function App()');
+    });
+
+    it('does not touch a non-blank entry, even with malformed syntax', () => {
+      const broken = 'export';
+      const out = withShellFile({ 'App.tsx': broken }, 'App.tsx', undefined);
+      expect(out['App.tsx']).toBe(broken);
+    });
+
+    it('targets the configured entry path, not a hardcoded App.tsx', () => {
+      const out = withShellFile({}, 'Main.tsx', undefined);
+      expect(out['Main.tsx']).toContain('export default function App()');
+      expect(out['App.tsx']).toBeUndefined();
+    });
+
+    it('does not mutate the input files map when the stub is injected', () => {
+      const input: Record<string, string> = {};
+      withShellFile(input, 'App.tsx', undefined);
+      expect('App.tsx' in input).toBe(false);
+    });
+
+    it('still injects the synthetic shell alongside the entry stub', () => {
+      const out = withShellFile({}, 'App.tsx', undefined);
+      expect(out[SHELL_PATH]).toContain(`from './App'`);
+      expect(out['App.tsx']).toContain('export default function App()');
+    });
+  });
 });

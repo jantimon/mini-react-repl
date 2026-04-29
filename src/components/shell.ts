@@ -19,19 +19,44 @@ import type { Files } from '../types.ts';
 export const SHELL_PATH = 'ReplShell.tsx';
 
 /**
+ * No-op default export injected under the entry path when the consumer's
+ * entry file is missing or blank. Keeps the shell's `import Entry from
+ * './App'` resolvable and gives React a real component to mount, so HMR
+ * stays alive while the user types from scratch.
+ */
+const ENTRY_FALLBACK_SOURCE = `export default function App() { return null }\n`;
+
+function isBlankSource(s: string | undefined): boolean {
+  return s === undefined || s.trim() === '';
+}
+
+/**
  * Compose the file table the engine sees: user files plus a synthetic
- * `ReplShell.tsx`. Resolution order:
+ * `ReplShell.tsx`, plus an entry stub when the user's entry is blank.
  *
+ * Shell resolution:
  *   1. User dropped `ReplShell.tsx` into `files` → keep theirs (visible in
  *      tabs, edited like any other file).
  *   2. `customShell` is a string → inject it under `ReplShell.tsx`.
  *   3. Otherwise → inject the generated default — a pass-through that just
  *      renders the entry component.
+ *
+ * Entry fallback: when `files[entry]` is missing or whitespace-only, an
+ * `App() => null` stub is injected at the entry path. Source-level errors
+ * in a non-empty entry are left alone — those flow through swc and surface
+ * as transform errors. The stub is engine-side only; consumers see their
+ * `files` map untouched (no `onFilesChange` bleed, editor still shows the
+ * empty buffer).
  */
 export function withShellFile(files: Files, entry: string, customShell: string | undefined): Files {
-  if (SHELL_PATH in files) return files;
-  const source = customShell ?? buildDefaultShellSource(entry);
-  return { ...files, [SHELL_PATH]: source };
+  let next = files;
+  if (isBlankSource(files[entry])) {
+    next = { ...next, [entry]: ENTRY_FALLBACK_SOURCE };
+  }
+  if (!(SHELL_PATH in next)) {
+    next = { ...next, [SHELL_PATH]: customShell ?? buildDefaultShellSource(entry) };
+  }
+  return next;
 }
 
 /**
