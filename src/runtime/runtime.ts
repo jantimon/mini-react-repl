@@ -25,6 +25,7 @@ import * as RefreshRuntime from 'react-refresh/runtime';
 
 import type { ToIframe, FromIframe, ModulePayload } from './protocol.ts';
 import { showOverlay, hideOverlay, setOverlayEnabled, type OverlayError } from './overlay.ts';
+import { wrapModuleBody } from './module-wrapper.ts';
 
 declare global {
   interface Window {
@@ -152,23 +153,6 @@ function buildBlobUrl(payload: ModulePayload): string {
   }
   const wrapped = wrapModuleBody(payload.path, code);
   return URL.createObjectURL(new Blob([wrapped], { type: 'text/javascript' }));
-}
-
-function wrapModuleBody(path: string, body: string): string {
-  const safe = JSON.stringify(path);
-  return [
-    `const __repl__ = window.__repl__;`,
-    `const __prevReg = window.$RefreshReg$;`,
-    `const __prevSig = window.$RefreshSig$;`,
-    `window.$RefreshReg$ = (type, id) => __repl__.refresh.register(${safe}, type, id);`,
-    `window.$RefreshSig$ = () => __repl__.refresh.createSignature();`,
-    body,
-    // restore previous reg/sig (best-effort; ESM modules execute once so
-    // this is mostly defensive in case nested code reads them).
-    `window.$RefreshReg$ = __prevReg;`,
-    `window.$RefreshSig$ = __prevSig;`,
-    `__repl__.commit(${safe});`,
-  ].join('\n');
 }
 
 async function mountEntry(blobUrl: string, path: string): Promise<void> {
