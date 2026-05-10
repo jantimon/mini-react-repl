@@ -1,5 +1,5 @@
 /**
- * E2E suite for mini-react-repl. Runs against examples/demo with ?test exposed
+ * E2E suite for mini-react-repl. Runs against examples/e2e-fixture with ?test exposed
  * window hooks so we drive file changes without typing into Monaco.
  *
  * The test cases match SPEC.md §17.

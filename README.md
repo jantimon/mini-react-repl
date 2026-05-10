@@ -664,7 +664,7 @@ is a tax we don't want to pay.
 git clone https://github.com/jantimon/mini-react-repl
 cd mini-react-repl
 pnpm install
-pnpm dev          # runs examples/demo
+pnpm dev          # runs examples/e2e-fixture (the Playwright target)
 pnpm test         # vitest
 pnpm test:e2e     # playwright (chromium only for now)
 pnpm build        # tsup, library only
@@ -673,18 +673,23 @@ pnpm build        # tsup, library only
 repo layout:
 
 ```
-src/                  # the library
-src/runtime/          # code shipped INTO the iframe srcdoc
-src/engine/           # transform pipeline (worker, registry, rewriter)
-src/components/       # React components
-src/editor-monaco/    # optional Monaco adapter (separate export)
-src/vendor-default/   # optional default vendor (separate export)
-src/vendor-builder/   # optional vendor CLI (separate export)
-examples/demo/        # vite app, used by playwright
-examples/transform/   # custom-loader example (.md → React)
+src/                       # the library
+src/runtime/               # code shipped INTO the iframe srcdoc
+src/engine/                # transform pipeline (worker, registry, rewriter)
+src/components/            # React components
+src/editor-monaco/         # optional Monaco adapter (separate export)
+src/inspect/               # optional inspect/picker (separate export)
+src/vendor-default/        # optional default vendor (separate export)
+src/vendor-builder/        # optional vendor CLI (separate export)
+examples/starter/          # smallest working example — read this first
+examples/gh-pages/         # deployed showcase (lazy-loaded inspect)
+examples/e2e-fixture/      # Playwright target (full of __replTest__ hooks)
+examples/transform/        # custom-loader example (.md → React)
+examples/custom-vendor/    # bring-your-own vendor bundle
+examples/virtual-modules/  # virtual module imports
 ```
 
-E2E tests run against `examples/demo` on chromium only for v1. firefox + webkit
+E2E tests run against `examples/e2e-fixture` on chromium only for v1. firefox + webkit
 are deferred until the chromium suite is stable. see [SPEC.md](./SPEC.md) §17.
 
 PRs welcome. small ones land fast. for anything architectural, open an issue

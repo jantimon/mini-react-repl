@@ -3,7 +3,8 @@
   "ignorePatterns": [
     "dist",
     "node_modules",
-    "examples/demo/dist",
+    "examples/e2e-fixture/dist",
+    "examples/gh-pages/dist",
     "test-results",
     "playwright-report",
     "src/runtime/runtime.bundled.ts",

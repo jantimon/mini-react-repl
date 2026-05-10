@@ -757,18 +757,26 @@ themselves (the library does not).
 
 ---
 
-## 15. The `examples/demo` app
+## 15. The example apps
 
-A Vite SPA living in the repo (not published) that exists to:
+The repo ships several Vite SPAs under `examples/` (none published). Each
+has one job — overloading them masks bugs and confuses contributors:
 
-1. Prove the library works end-to-end.
-2. Serve as a reference integration in docs.
-3. Run Playwright tests against.
+- **`examples/starter/`** — smallest working integration; the "read this
+  first" reference. If it grows past ~60 lines, the library is missing a
+  default.
+- **`examples/gh-pages/`** — deployed to GitHub Pages. Inspect-forward,
+  curated seed code, lazy-loaded `mini-react-repl/inspect`. No test hooks.
+- **`examples/e2e-fixture/`** — Playwright target. Carries the
+  `window.__replTest__` hooks, `?test`-gated `bodyHtml`, and `iframeRef`
+  plumbing. Not a place to read for first-time understanding.
+- **`examples/transform/`**, **`examples/custom-vendor/`**,
+  **`examples/virtual-modules/`** — single-feature deep dives.
 
-It does:
+Reference shape (the starter):
 
 ```tsx
-// examples/demo/src/App.tsx
+// examples/starter/src/App.tsx
 import { Repl } from 'mini-react-repl';
 import { defaultVendor } from 'mini-react-repl/vendor-default';
 import { MonacoReplEditor } from 'mini-react-repl/editor-monaco';
@@ -783,9 +791,6 @@ export default function App() {
   );
 }
 ```
-
-That's the entire app. If the demo gets longer than ~50 lines, the library
-is missing a default.
 
 ---
 
@@ -809,12 +814,12 @@ generator, vendor builder.
 - **Browser:** Chromium only for v1. Firefox + WebKit deferred until the
   Chromium suite is stable. The library still _targets_ Chrome 109+ /
   Firefox 108+ / Safari 16.4+ — we just don't gate CI on the other two yet.
-- **Target:** the `examples/demo` Vite app, started by Playwright's
+- **Target:** the `examples/e2e-fixture` Vite app, started by Playwright's
   `webServer` config (`vite --port 5173`).
-- **Determinism:** `examples/demo/public/swc.wasm` is committed (or fetched in
-  global setup) and the demo passes `swcWasmUrl="/swc.wasm"`. No CDN fetch
-  during tests.
-- **Test hooks:** when the demo is loaded with `?test`, it exposes
+- **Determinism:** `examples/e2e-fixture/public/swc.wasm` is committed (or
+  fetched in global setup) and the fixture passes `swcWasmUrl="/swc.wasm"`.
+  No CDN fetch during tests.
+- **Test hooks:** when the fixture is loaded with `?test`, it exposes
   `window.__replTest__.setFile(path, src)` etc. so state-logic tests bypass
   Monaco entirely. Editor-specific tests use real keystrokes against the
   Monaco DOM.
@@ -1169,7 +1174,7 @@ playground decisions below for completeness.
 | Console capture    | None — consumers open DevTools                                           | Serialization complexity not worth it in v1.                              |
 | User-file CSS      | Alphabetical concat, one `<style>` per file, hot-swap textContent        | `@import` opens a resolution rabbit hole.                                 |
 | Tailwind           | Not bundled — consumers add via `headHtml`                               | Hard-bundling locks the styling story.                                    |
-| Cold start         | None imposed by library — consumer's `files` prop is the source of truth | Defaults belong in `examples/demo`, not the library.                      |
+| Cold start         | None imposed by library — consumer's `files` prop is the source of truth | Defaults belong in `examples/gh-pages`, not the library.                  |
 
 ---
 
@@ -1236,7 +1241,7 @@ without re-fetching the blob URL.
 - **Unit:** synthetic source maps fed through `lookupSourcePosition`,
   V8 stack-string fixtures fed through `parseStack`, hand-shaped fiber
   trees fed through `walkFibers` / `getComponentName`.
-- **E2E:** the existing `examples/demo` adds an `<InspectMode/>` behind a
+- **E2E:** the `examples/e2e-fixture` adds an `<InspectMode/>` behind a
   test hook (`window.__replTest__.setInspectActive(true)`); a Playwright
   test toggles it, clicks the seed `<h1>`, and asserts
   `pick.stack[0]` matches the seed source position

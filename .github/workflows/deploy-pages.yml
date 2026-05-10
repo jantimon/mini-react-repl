@@ -30,13 +30,13 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
-      - run: pnpm --filter demo build
+      - run: pnpm --filter gh-pages build
 
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: examples/demo/dist
+          path: examples/gh-pages/dist
 
   deploy:
     name: deploy to Pages
