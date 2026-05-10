@@ -86,4 +86,55 @@ test.describe('mini-react-repl/inspect', () => {
     expect(top.lineNumber).toBe(7);
     expect(top.componentName).toBe('App');
   });
+
+  test('hovering shows the default bluish overlay over the target', async ({ page }) => {
+    await gotoDemo(page);
+    const h1 = preview(page).locator('h1');
+    await expect(h1).toContainText(/Today is/i, { timeout: 30_000 });
+
+    await page.evaluate(() => window.__replTest__.setInspectActive(true));
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const iframe = document.querySelector('iframe.repl-iframe') as HTMLIFrameElement | null;
+          return (
+            iframe?.contentDocument?.documentElement?.hasAttribute('data-repl-inspect-active') ??
+            false
+          );
+        }),
+      )
+      .toBe(true);
+
+    await h1.hover();
+
+    // The overlay only paints once mousemove fires inside the iframe; poll
+    // because Playwright's hover dispatch races the picker's listener.
+    const readOverlay = () =>
+      page.evaluate(() => {
+        const iframe = document.querySelector('iframe.repl-iframe') as HTMLIFrameElement | null;
+        const ov = iframe?.contentDocument?.querySelector(
+          '[data-repl-inspect-overlay]',
+        ) as HTMLElement | null;
+        if (!ov || !iframe?.contentWindow) return null;
+        const cs = iframe.contentWindow.getComputedStyle(ov);
+        return {
+          opacity: cs.opacity,
+          borderTopWidth: cs.borderTopWidth,
+          backgroundColor: cs.backgroundColor,
+          width: ov.style.width,
+        };
+      });
+
+    await expect.poll(readOverlay, { timeout: 5_000 }).not.toBeNull();
+    const overlayStyle = await readOverlay();
+
+    // The default style is `2px solid #3b82f6` with a translucent blue fill.
+    // If `ensureOverlay` short-circuits before applying defaults (the bug
+    // this test guards against), borderTopWidth is "0px" and backgroundColor
+    // is "rgba(0, 0, 0, 0)" — invisible despite a correctly-sized box.
+    expect(overlayStyle!.opacity).toBe('1');
+    expect(overlayStyle!.borderTopWidth).toBe('2px');
+    expect(overlayStyle!.backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+    expect(overlayStyle!.width).not.toBe('');
+  });
 });
