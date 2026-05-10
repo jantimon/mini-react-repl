@@ -107,8 +107,11 @@ test.describe('mini-react-repl/inspect', () => {
 
     await h1.hover();
 
-    // The overlay only paints once mousemove fires inside the iframe; poll
-    // because Playwright's hover dispatch races the picker's listener.
+    // Read the overlay from the inline style (set deterministically by the
+    // picker after the show-delay timer fires) plus the computed background
+    // and shadow. `getComputedStyle().opacity` would interpolate during the
+    // CSS fade and produce values like "0.43" mid-transition — the inline
+    // value flips cleanly from "0" to "1".
     const readOverlay = () =>
       page.evaluate(() => {
         const iframe = document.querySelector('iframe.repl-iframe') as HTMLIFrameElement | null;
@@ -118,23 +121,26 @@ test.describe('mini-react-repl/inspect', () => {
         if (!ov || !iframe?.contentWindow) return null;
         const cs = iframe.contentWindow.getComputedStyle(ov);
         return {
-          opacity: cs.opacity,
-          borderTopWidth: cs.borderTopWidth,
+          opacity: ov.style.opacity,
           backgroundColor: cs.backgroundColor,
+          boxShadow: cs.boxShadow,
           width: ov.style.width,
         };
       });
 
-    await expect.poll(readOverlay, { timeout: 5_000 }).not.toBeNull();
-    const overlayStyle = await readOverlay();
+    // The picker waits ~100ms after hover before flipping opacity to "1"
+    // (the no-flash delay). Poll up to 5s, well past that.
+    await expect
+      .poll(async () => (await readOverlay())?.opacity ?? null, { timeout: 5_000 })
+      .toBe('1');
 
-    // The default style is `2px solid #3b82f6` with a translucent blue fill.
-    // If `ensureOverlay` short-circuits before applying defaults (the bug
-    // this test guards against), borderTopWidth is "0px" and backgroundColor
-    // is "rgba(0, 0, 0, 0)" — invisible despite a correctly-sized box.
-    expect(overlayStyle!.opacity).toBe('1');
-    expect(overlayStyle!.borderTopWidth).toBe('2px');
+    const overlayStyle = await readOverlay();
+    // If `ensureOverlay` short-circuits before applying defaults, both
+    // `backgroundColor` and `boxShadow` come back at the UA defaults
+    // ("rgba(0, 0, 0, 0)" / "none") — invisible despite a correctly-sized
+    // box. The bug this test guards against.
     expect(overlayStyle!.backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+    expect(overlayStyle!.boxShadow).not.toBe('none');
     expect(overlayStyle!.width).not.toBe('');
   });
 });

@@ -6,6 +6,17 @@
  * @internal
  */
 
+// Delay before showing the overlay after the cursor lands on a new element.
+// Short enough to feel responsive when the user pauses on a target, long
+// enough that pointer movements that just pass through the iframe never
+// flash the overlay up.
+const SHOW_DELAY_MS = 100;
+
+// Opacity fade duration. Used both as the CSS `transition-duration` for
+// fade-in/out and as the buffer between starting the fade-out and removing
+// the element from the DOM in `destroyOverlay`.
+const FADE_MS = 120;
+
 const DEFAULT_STYLE: Partial<CSSStyleDeclaration> = {
   position: 'fixed',
   // Cancel the popover UA's `inset: 0` so `moveOverlayTo` controls geometry
@@ -15,10 +26,17 @@ const DEFAULT_STYLE: Partial<CSSStyleDeclaration> = {
   pointerEvents: 'none',
   zIndex: '2147483647',
   boxSizing: 'border-box',
-  border: '2px solid #3b82f6',
-  background: 'rgba(59,130,246,0.15)',
+  // The popover UA stylesheet ships `border: solid` (medium width, currentColor)
+  // — a thick black ring that's the wrong look for an inspect overlay.
+  // Explicitly zero it; the bluish fill + boxShadow do the work.
+  border: 'none',
+  background: 'rgba(59, 130, 246, 0.15)',
   borderRadius: '2px',
-  transition: 'opacity 80ms linear',
+  // Soft blue-tinted glow — picks up the fill colour without competing with
+  // it. Two layers: a tight close shadow for definition, a softer outer one
+  // for depth. Subtle on light backgrounds, invisible on dark.
+  boxShadow: '0 1px 2px rgba(59, 130, 246, 0.18), 0 4px 12px rgba(59, 130, 246, 0.18)',
+  transition: `opacity ${FADE_MS}ms linear`,
   opacity: '0',
   margin: '0',
   padding: '0',
@@ -27,6 +45,14 @@ const DEFAULT_STYLE: Partial<CSSStyleDeclaration> = {
 
 let overlayEl: HTMLDivElement | null = null;
 let appliedClassName: string | undefined;
+let showTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearShowTimer(): void {
+  if (showTimer !== null) {
+    clearTimeout(showTimer);
+    showTimer = null;
+  }
+}
 
 /**
  * Create (or reuse) the overlay element and apply the consumer's class
@@ -77,6 +103,7 @@ function ensureOverlay(className: string | undefined): HTMLDivElement {
     overlayEl.removeAttribute('style');
     overlayEl.style.position = 'fixed';
     overlayEl.style.inset = 'auto';
+    overlayEl.style.border = 'none';
     overlayEl.style.pointerEvents = 'none';
     overlayEl.style.zIndex = '2147483647';
     overlayEl.style.opacity = '0';
@@ -86,6 +113,9 @@ function ensureOverlay(className: string | undefined): HTMLDivElement {
 
 export function moveOverlayTo(el: Element | null, className: string | undefined): void {
   if (!el) {
+    // Hide is instant (no delay) so leaving the iframe doesn't leave the
+    // overlay lingering. The CSS transition still gives an 80ms fade-out.
+    clearShowTimer();
     if (overlayEl) overlayEl.style.opacity = '0';
     return;
   }
@@ -95,12 +125,34 @@ export function moveOverlayTo(el: Element | null, className: string | undefined)
   ov.style.top = rect.top + 'px';
   ov.style.width = rect.width + 'px';
   ov.style.height = rect.height + 'px';
-  ov.style.opacity = '1';
+  // Already visible — keep it visible and let the position update track
+  // instantly across adjacent elements (no re-delay).
+  if (ov.style.opacity === '1') return;
+  // Pending show — let the existing timer fire; the position has already
+  // been updated to the latest element above, so when it fires it'll
+  // appear over the right target.
+  if (showTimer !== null) return;
+  showTimer = setTimeout(() => {
+    showTimer = null;
+    if (overlayEl) overlayEl.style.opacity = '1';
+  }, SHOW_DELAY_MS);
 }
 
-/** Detach the overlay from the DOM and reset internal state. */
+/**
+ * Fade the overlay out then detach it. The element stays in the DOM (and in
+ * the top layer) until the fade finishes so disabling inspect mode doesn't
+ * cause an instant disappear.
+ */
 export function destroyOverlay(): void {
-  if (overlayEl) overlayEl.remove();
+  clearShowTimer();
+  if (!overlayEl) return;
+  // Capture the live ref so the removal closure operates on this specific
+  // element. If the picker re-enables before the timer fires, a fresh
+  // overlay will be created (overlayEl=null below) and the two coexist
+  // briefly until the old one's removal completes — which is fine.
+  const el = overlayEl;
   overlayEl = null;
   appliedClassName = undefined;
+  el.style.opacity = '0';
+  setTimeout(() => el.remove(), FADE_MS);
 }
