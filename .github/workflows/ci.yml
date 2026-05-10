@@ -68,6 +68,10 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
+      # Re-link workspace bins now that dist/ exists. The first install
+      # warns + skips `repl-vendor-build` because `dist/vendor-builder/cli.js`
+      # is built by `pnpm run build`, not present at install time.
+      - run: pnpm install --frozen-lockfile
 
       - name: install playwright chromium
         run: pnpm exec playwright install --with-deps chromium
