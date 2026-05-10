@@ -8,7 +8,9 @@
     "test-results",
     "playwright-report",
     "src/runtime/runtime.bundled.ts",
-    "src/vendor-default/data.ts"
+    "src/inspect/picker.bundled.ts",
+    "src/vendor-default/data.ts",
+    "examples/*/src/vendor/repl.vendor.json"
   ],
   "semi": true,
   "singleQuote": true,

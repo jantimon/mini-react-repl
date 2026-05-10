@@ -175,7 +175,7 @@ async function main(): Promise<void> {
 
   const bundlePath = resolve(process.cwd(), args.bundleOut);
   await mkdir(dirname(bundlePath), { recursive: true });
-  await writeFile(bundlePath, JSON.stringify(importMapBundle) + '\n', 'utf8');
+  await writeFile(bundlePath, JSON.stringify(importMapBundle, null, 2) + '\n', 'utf8');
   process.stderr.write(`✓ wrote ${bundlePath}\n`);
 }
 
