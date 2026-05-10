@@ -1,5 +1,11 @@
 # mini-react-repl
 
+[![npm](https://img.shields.io/npm/v/mini-react-repl)](https://www.npmjs.com/package/mini-react-repl)
+[![types](https://img.shields.io/npm/types/mini-react-repl)](https://www.npmjs.com/package/mini-react-repl)
+[![license](https://img.shields.io/npm/l/mini-react-repl)](./LICENSE)
+[![CI](https://github.com/jantimon/mini-react-repl/actions/workflows/ci.yml/badge.svg)](https://github.com/jantimon/mini-react-repl/actions/workflows/ci.yml)
+[![demo](https://img.shields.io/badge/demo-live-brightgreen)](https://jantimon.github.io/mini-react-repl/)
+
 A multi-file React + TSX REPL that runs entirely in the browser. Edit, see the
 result live, ship the whole thing as static files
 
@@ -54,9 +60,10 @@ Refresh, no backend, no SSR, no server-side bundling.
 
 - **arbitrary npm at runtime.** the vendor set is fixed at build time. there's
   a builder if you want a different set. no esm.sh fallback in v1.
-- **typescript diagnostics.** swc strips types and goes home. monaco's
-  built-in JS service is what you get. if you want red squiggles for
-  `date-fns` typos, that's a v2 problem (or yours).
+- **type errors as a build gate.** swc strips types, the iframe runs. Monaco
+  shows red squiggles (user files + vendor packages, via the pre-baked
+  `.d.ts`), but a type error never blocks the run. like Vite dev:
+  diagnostics are advisory.
 - **folders.** flat file list. `./Counter`, not `./components/Counter`.
 - **CJS.** ESM-only. modern browsers only — Chrome 109+, FF 108+, Safari 16.4+.
 - **persistence, sharing, templates, console capture.** open DevTools for the
@@ -644,10 +651,11 @@ component boundary, which gets re-rendered. cascade is usually 1–2 modules
 deep. you don't have to think about it.
 
 **can I get TypeScript red squiggles for the vendor libs?**
-not in v1. swc strips types, that's the whole transform pipeline. for full
-diagnostics you'd run `@typescript/vfs` + `tsserver` in another worker and
-load `.d.ts` for every vendor package. it's a few MB and a non-trivial
-amount of code. it's on the v2 list.
+yes — the default vendor pre-bakes `.d.ts` for `react`, `react-dom`,
+`date-fns`, `dayjs`, `lodash-es`, and `MonacoReplEditor` registers them with
+Monaco's TS service via `addExtraLib`. for custom vendors, `repl-vendor-build`
+emits a `repl.types.json` next to the JS chunks. swc still strips types at
+runtime — diagnostics are editor-side only and don't gate the transform.
 
 **does it work in Storybook / Docusaurus / Notion-like embeds?**
 yes — srcdoc preview means it doesn't care what frame it's rendered in.
@@ -668,25 +676,6 @@ pnpm dev          # runs examples/e2e-fixture (the Playwright target)
 pnpm test         # vitest
 pnpm test:e2e     # playwright (chromium only for now)
 pnpm build        # tsup, library only
-```
-
-repo layout:
-
-```
-src/                       # the library
-src/runtime/               # code shipped INTO the iframe srcdoc
-src/engine/                # transform pipeline (worker, registry, rewriter)
-src/components/            # React components
-src/editor-monaco/         # optional Monaco adapter (separate export)
-src/inspect/               # optional inspect/picker (separate export)
-src/vendor-default/        # optional default vendor (separate export)
-src/vendor-builder/        # optional vendor CLI (separate export)
-examples/starter/          # smallest working example — read this first
-examples/gh-pages/         # deployed showcase (lazy-loaded inspect)
-examples/e2e-fixture/      # Playwright target (full of __replTest__ hooks)
-examples/transform/        # custom-loader example (.md → React)
-examples/custom-vendor/    # bring-your-own vendor bundle
-examples/virtual-modules/  # virtual module imports
 ```
 
 E2E tests run against `examples/e2e-fixture` on chromium only for v1. firefox + webkit
