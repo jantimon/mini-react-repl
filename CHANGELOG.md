@@ -15,11 +15,12 @@ All notable changes to `mini-react-repl`. Dates are YYYY-MM-DD.
 
 ### Added
 
-- **Inspect mode.** Click-to-source picker for the iframe preview: hover highlights React fibers, click resolves the JSX call site through the bundle's source map back to a user file/line/column. Imported separately so consumers who don't need it skip the picker chunk:
+- **Inspect mode.** Click-to-source picker for the iframe preview: hover highlights React fibers, click resolves the JSX call site through the bundle's source map back to a user file/line/column/component. Imported separately so consumers who don't need it skip the picker chunk:
   ```tsx
   import { InspectMode } from 'mini-react-repl/inspect';
+  <Repl ...><InspectMode active={picking} onElementPicked={...} onCancel={...} /></Repl>
   ```
-  Surfaced via `useRepl().inspect` (`enable()`, `disable()`, `onPick`). New e2e + unit tests cover fiber walk, stack parsing, and source-map mapping.
+  Picker is lazy-injected into the iframe on first activation. New e2e + unit tests cover fiber walk, stack parsing, and source-map mapping.
 - `examples/gh-pages` and `examples/starter` extracted from the old `examples/demo`. `examples/e2e-fixture` is the Playwright target. The Pages showcase lazy-loads `mini-react-repl/inspect` via `React.lazy`.
 
 ### Fixed

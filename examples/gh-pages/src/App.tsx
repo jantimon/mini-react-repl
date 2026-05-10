@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Repl, type Files } from 'mini-react-repl';
 import { defaultVendor } from 'mini-react-repl/vendor-default';
 import { MonacoReplEditor } from 'mini-react-repl/editor-monaco';
@@ -111,24 +111,27 @@ export function App() {
           justifyContent: 'space-between',
           gap: 16,
           padding: '10px 20px',
-          borderBottom: '1px solid #e5e7eb',
-          background: '#fff',
+          borderBottom: '1px solid light-dark(#e5e7eb, #1f2937)',
+          background: 'light-dark(#ffffff, #111827)',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
           <strong style={{ fontSize: 16 }}>mini-react-repl</strong>
-          <span style={{ color: '#6b7280', fontSize: 13 }}>browser-only React TSX REPL</span>
+          <span style={{ color: 'light-dark(#6b7280, #94a3b8)', fontSize: 13 }}>
+            browser-only React TSX REPL
+          </span>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
+          <ThemeToggle />
           <button
             type="button"
             onClick={onToggleInspect}
             style={{
               padding: '6px 12px',
               borderRadius: 6,
-              border: `1px solid ${active ? '#2563eb' : '#cbd5e1'}`,
-              background: active ? '#2563eb' : '#fff',
-              color: active ? '#fff' : '#0f172a',
+              border: `1px solid ${active ? '#2563eb' : 'light-dark(#cbd5e1, #334155)'}`,
+              background: active ? '#2563eb' : 'light-dark(#ffffff, #1e293b)',
+              color: active ? '#ffffff' : 'light-dark(#0f172a, #e2e8f0)',
               cursor: 'pointer',
               fontSize: 13,
             }}
@@ -142,8 +145,9 @@ export function App() {
             style={{
               padding: '6px 12px',
               borderRadius: 6,
-              border: '1px solid #cbd5e1',
-              color: '#0f172a',
+              border: '1px solid light-dark(#cbd5e1, #334155)',
+              background: 'light-dark(#ffffff, #1e293b)',
+              color: 'light-dark(#0f172a, #e2e8f0)',
               textDecoration: 'none',
               fontSize: 13,
             }}
@@ -178,6 +182,56 @@ export function App() {
 
       {lastPick && <PickPanel pick={lastPick} onClose={() => setLastPick(null)} />}
     </div>
+  );
+}
+
+type ThemePref = 'auto' | 'light' | 'dark';
+const THEME_KEY = 'mini-react-repl:theme';
+const NEXT: Record<ThemePref, ThemePref> = { auto: 'light', light: 'dark', dark: 'auto' };
+const LABEL: Record<ThemePref, string> = { auto: 'Theme: Auto', light: 'Theme: Light', dark: 'Theme: Dark' };
+
+function readPref(): ThemePref {
+  const v = typeof localStorage !== 'undefined' ? localStorage.getItem(THEME_KEY) : null;
+  return v === 'light' || v === 'dark' ? v : 'auto';
+}
+
+function ThemeToggle() {
+  const [pref, setPref] = useState<ThemePref>(readPref);
+
+  useEffect(() => {
+    // `color-scheme` on <html> drives `light-dark()` for the shell.
+    // The REPL theme reads its own `--repl-color-scheme` var (fallback
+    // `light dark`), so set both — otherwise the .repl-root rule shadows
+    // the inherited value and the editor stays on the system pref.
+    const root = document.documentElement;
+    if (pref === 'auto') {
+      root.style.removeProperty('color-scheme');
+      root.style.removeProperty('--repl-color-scheme');
+      localStorage.removeItem(THEME_KEY);
+    } else {
+      root.style.colorScheme = pref;
+      root.style.setProperty('--repl-color-scheme', pref);
+      localStorage.setItem(THEME_KEY, pref);
+    }
+  }, [pref]);
+
+  return (
+    <button
+      type="button"
+      onClick={() => setPref(NEXT[pref])}
+      title="Cycle theme: Auto → Light → Dark"
+      style={{
+        padding: '6px 12px',
+        borderRadius: 6,
+        border: '1px solid light-dark(#cbd5e1, #334155)',
+        background: 'light-dark(#ffffff, #1e293b)',
+        color: 'light-dark(#0f172a, #e2e8f0)',
+        cursor: 'pointer',
+        fontSize: 13,
+      }}
+    >
+      {LABEL[pref]}
+    </button>
   );
 }
 

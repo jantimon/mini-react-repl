@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>mini-react-repl</title>
     <style>
+      :root {
+        color-scheme: light dark;
+      }
       html,
       body,
       #root {
@@ -13,12 +16,25 @@
       }
       body {
         font-family: ui-sans-serif, system-ui;
-        background: #f8fafc;
+        background: light-dark(#f8fafc, #0b1220);
+        color: light-dark(#0f172a, #e2e8f0);
       }
     </style>
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // Apply saved theme before first paint so a saved override doesn't
+      // flash through the system preference. Key must stay in sync with
+      // THEME_KEY in src/App.tsx.
+      try {
+        var v = localStorage.getItem('mini-react-repl:theme');
+        if (v === 'light' || v === 'dark') {
+          document.documentElement.style.colorScheme = v;
+          document.documentElement.style.setProperty('--repl-color-scheme', v);
+        }
+      } catch (_) {}
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
