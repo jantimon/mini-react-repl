@@ -12,6 +12,71 @@ import swcWasmUrl from '@swc/wasm-web/wasm_bg.wasm?url';
 // stays true so the chunk isn't re-fetched.
 const InspectMode = lazy(() => import('mini-react-repl/inspect'));
 
+const ICON_PROPS = {
+  width: 16,
+  height: 16,
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 2,
+  strokeLinecap: 'round',
+  strokeLinejoin: 'round',
+  'aria-hidden': true,
+} as const;
+
+function SunIcon() {
+  return (
+    <svg {...ICON_PROPS}>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2" />
+      <path d="M12 20v2" />
+      <path d="m4.93 4.93 1.41 1.41" />
+      <path d="m17.66 17.66 1.41 1.41" />
+      <path d="M2 12h2" />
+      <path d="M20 12h2" />
+      <path d="m6.34 17.66-1.41 1.41" />
+      <path d="m19.07 4.93-1.41 1.41" />
+    </svg>
+  );
+}
+
+function MoonIcon() {
+  return (
+    <svg {...ICON_PROPS}>
+      <path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" />
+    </svg>
+  );
+}
+
+function InspectIcon() {
+  return (
+    <svg {...ICON_PROPS}>
+      <path d="M12.034 12.681a.498.498 0 0 1 .647-.647l9 3.5a.5.5 0 0 1-.033.943l-3.444 1.068a1 1 0 0 0-.66.66l-1.067 3.443a.5.5 0 0 1-.943.033z" />
+      <path d="M21 11V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6" />
+    </svg>
+  );
+}
+
+function StopInspectIcon() {
+  return (
+    <svg {...ICON_PROPS}>
+      <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+      <path d="m15 9-6 6" />
+      <path d="m9 9 6 6" />
+    </svg>
+  );
+}
+
+const ICON_BUTTON_STYLE: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: 6,
+  borderRadius: 6,
+  cursor: 'pointer',
+  lineHeight: 0,
+};
+
 const HELLO: Files = {
   'App.tsx': `import { Card } from './Card';
 import { TodoList } from './TodoList';
@@ -111,13 +176,13 @@ export function App() {
           justifyContent: 'space-between',
           gap: 16,
           padding: '10px 20px',
-          borderBottom: '1px solid light-dark(#e5e7eb, #1f2937)',
-          background: 'light-dark(#ffffff, #111827)',
+          borderBottom: '1px solid light-dark(#e2e3e7, #22242a)',
+          background: 'light-dark(#f3f4f6, #15161a)',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
           <strong style={{ fontSize: 16 }}>mini-react-repl</strong>
-          <span style={{ color: 'light-dark(#6b7280, #94a3b8)', fontSize: 13 }}>
+          <span style={{ color: 'light-dark(#4b5563, #aab)', fontSize: 13 }}>
             browser-only React TSX REPL
           </span>
         </div>
@@ -126,17 +191,16 @@ export function App() {
           <button
             type="button"
             onClick={onToggleInspect}
+            aria-label={active ? 'Stop inspecting (Esc to cancel)' : 'Inspect element'}
+            title={active ? 'Stop inspecting (Esc to cancel)' : 'Inspect element'}
             style={{
-              padding: '6px 12px',
-              borderRadius: 6,
-              border: `1px solid ${active ? '#2563eb' : 'light-dark(#cbd5e1, #334155)'}`,
-              background: active ? '#2563eb' : 'light-dark(#ffffff, #1e293b)',
-              color: active ? '#ffffff' : 'light-dark(#0f172a, #e2e8f0)',
-              cursor: 'pointer',
-              fontSize: 13,
+              ...ICON_BUTTON_STYLE,
+              border: `1px solid ${active ? '#2563eb' : 'light-dark(#e2e3e7, #22242a)'}`,
+              background: active ? '#2563eb' : 'light-dark(#ffffff, #1a1c20)',
+              color: active ? '#ffffff' : 'light-dark(#111111, #e6e7ea)',
             }}
           >
-            {active ? 'Inspecting… (Esc to cancel)' : 'Inspect element'}
+            {active ? <StopInspectIcon /> : <InspectIcon />}
           </button>
           <a
             href="https://github.com/jantimon/mini-react-repl"
@@ -145,9 +209,9 @@ export function App() {
             style={{
               padding: '6px 12px',
               borderRadius: 6,
-              border: '1px solid light-dark(#cbd5e1, #334155)',
-              background: 'light-dark(#ffffff, #1e293b)',
-              color: 'light-dark(#0f172a, #e2e8f0)',
+              border: '1px solid light-dark(#e2e3e7, #22242a)',
+              background: 'light-dark(#ffffff, #1a1c20)',
+              color: 'light-dark(#111111, #e6e7ea)',
               textDecoration: 'none',
               fontSize: 13,
             }}
@@ -185,56 +249,46 @@ export function App() {
   );
 }
 
-type ThemePref = 'auto' | 'light' | 'dark';
+type Theme = 'light' | 'dark';
 const THEME_KEY = 'mini-react-repl:theme';
-const NEXT: Record<ThemePref, ThemePref> = { auto: 'light', light: 'dark', dark: 'auto' };
-const LABEL: Record<ThemePref, string> = {
-  auto: 'Theme: Auto',
-  light: 'Theme: Light',
-  dark: 'Theme: Dark',
-};
 
-function readPref(): ThemePref {
-  const v = typeof localStorage !== 'undefined' ? localStorage.getItem(THEME_KEY) : null;
-  return v === 'light' || v === 'dark' ? v : 'auto';
+function readPref(): Theme {
+  const v = localStorage.getItem(THEME_KEY);
+  if (v === 'light' || v === 'dark') return v;
+  // No saved choice yet — seed from the OS so the first paint matches the
+  // user's environment. Once they click, that choice is persisted and the
+  // OS preference is no longer consulted.
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
 function ThemeToggle() {
-  const [pref, setPref] = useState<ThemePref>(readPref);
+  const [pref, setPref] = useState<Theme>(readPref);
 
   useEffect(() => {
-    // `color-scheme` on <html> drives `light-dark()` for the shell.
-    // The REPL theme reads its own `--repl-color-scheme` var (fallback
-    // `light dark`), so set both — otherwise the .repl-root rule shadows
-    // the inherited value and the editor stays on the system pref.
+    // `data-theme` selects the unlayered `--repl-*` overrides in index.html
+    // so a forced choice beats theme.css's prefers-color-scheme block.
     const root = document.documentElement;
-    if (pref === 'auto') {
-      root.style.removeProperty('color-scheme');
-      root.style.removeProperty('--repl-color-scheme');
-      localStorage.removeItem(THEME_KEY);
-    } else {
-      root.style.colorScheme = pref;
-      root.style.setProperty('--repl-color-scheme', pref);
-      localStorage.setItem(THEME_KEY, pref);
-    }
+    root.style.colorScheme = pref;
+    root.style.setProperty('--repl-color-scheme', pref);
+    root.dataset.theme = pref;
+    localStorage.setItem(THEME_KEY, pref);
   }, [pref]);
 
+  const next: Theme = pref === 'light' ? 'dark' : 'light';
   return (
     <button
       type="button"
-      onClick={() => setPref(NEXT[pref])}
-      title="Cycle theme: Auto → Light → Dark"
+      onClick={() => setPref(next)}
+      aria-label={`Switch to ${next} theme`}
+      title={`Switch to ${next} theme`}
       style={{
-        padding: '6px 12px',
-        borderRadius: 6,
-        border: '1px solid light-dark(#cbd5e1, #334155)',
-        background: 'light-dark(#ffffff, #1e293b)',
-        color: 'light-dark(#0f172a, #e2e8f0)',
-        cursor: 'pointer',
-        fontSize: 13,
+        ...ICON_BUTTON_STYLE,
+        border: '1px solid light-dark(#e2e3e7, #22242a)',
+        background: 'light-dark(#ffffff, #1a1c20)',
+        color: 'light-dark(#111111, #e6e7ea)',
       }}
     >
-      {LABEL[pref]}
+      {pref === 'light' ? <MoonIcon /> : <SunIcon />}
     </button>
   );
 }

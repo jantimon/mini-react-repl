@@ -16,8 +16,37 @@
       }
       body {
         font-family: ui-sans-serif, system-ui;
-        background: light-dark(#f8fafc, #0b1220);
-        color: light-dark(#0f172a, #e2e8f0);
+        background: light-dark(#fafafa, #0e0f12);
+        color: light-dark(#111111, #e6e7ea);
+      }
+
+      /* Unlayered overrides beat theme.css's @layer mini-react-repl,
+         so a forced toggle wins over prefers-color-scheme. */
+      :root[data-theme='dark'] .repl-root {
+        --repl-bg: #0e0f12;
+        --repl-fg: #e6e7ea;
+        --repl-border: #22242a;
+        --repl-tabs-bg: #15161a;
+        --repl-tab-fg: #aab;
+        --repl-tab-active-bg: #0e0f12;
+        --repl-tab-active-fg: #ffffff;
+        --repl-tab-hover-bg: #1a1c20;
+        --repl-tab-close-hover: #2a2d33;
+        --repl-accent: #79b8ff;
+        --repl-preview-bg: #ffffff;
+      }
+      :root[data-theme='light'] .repl-root {
+        --repl-bg: #fafafa;
+        --repl-fg: #111111;
+        --repl-border: #e2e3e7;
+        --repl-tabs-bg: #f3f4f6;
+        --repl-tab-fg: #4b5563;
+        --repl-tab-active-bg: #ffffff;
+        --repl-tab-active-fg: #111111;
+        --repl-tab-hover-bg: #eaecef;
+        --repl-tab-close-hover: #d8dade;
+        --repl-accent: #2563eb;
+        --repl-preview-bg: #ffffff;
       }
     </style>
   </head>
@@ -32,6 +61,7 @@
         if (v === 'light' || v === 'dark') {
           document.documentElement.style.colorScheme = v;
           document.documentElement.style.setProperty('--repl-color-scheme', v);
+          document.documentElement.dataset.theme = v;
         }
       } catch (_) {}
     </script>
