@@ -188,7 +188,11 @@ export function App() {
 type ThemePref = 'auto' | 'light' | 'dark';
 const THEME_KEY = 'mini-react-repl:theme';
 const NEXT: Record<ThemePref, ThemePref> = { auto: 'light', light: 'dark', dark: 'auto' };
-const LABEL: Record<ThemePref, string> = { auto: 'Theme: Auto', light: 'Theme: Light', dark: 'Theme: Dark' };
+const LABEL: Record<ThemePref, string> = {
+  auto: 'Theme: Auto',
+  light: 'Theme: Light',
+  dark: 'Theme: Dark',
+};
 
 function readPref(): ThemePref {
   const v = typeof localStorage !== 'undefined' ? localStorage.getItem(THEME_KEY) : null;
