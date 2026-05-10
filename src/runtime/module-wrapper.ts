@@ -11,19 +11,17 @@ export function wrapModuleBody(path: string, body: string): string {
   // close the pragma. encodeURIComponent leaves `'` alone, so handle it
   // explicitly.
   const sourceURL = path.replace(/[\s'"]/g, (ch) => (ch === "'" ? '%27' : encodeURIComponent(ch)));
+  // Joined onto one line so the body shifts by exactly one generated line.
   const prologue = [
     `const __repl__ = window.__repl__;`,
     `const __prevReg = window.$RefreshReg$;`,
     `const __prevSig = window.$RefreshSig$;`,
     `window.$RefreshReg$ = (type, id) => __repl__.refresh.register(${safe}, type, id);`,
     `window.$RefreshSig$ = () => __repl__.refresh.createSignature();`,
-  ];
-  // Body is shifted down by `prologue.length` lines in the wrapped output,
-  // so any inline source map inside it must shift its mappings the same
-  // amount — otherwise stack frames resolve to lines offset by the prologue.
-  const shiftedBody = shiftInlineSourceMap(body, prologue.length);
+  ].join('');
+  const shiftedBody = shiftInlineSourceMap(body, 1);
   return [
-    ...prologue,
+    prologue,
     shiftedBody,
     // restore previous reg/sig (best-effort; ESM modules execute once so
     // this is mostly defensive in case nested code reads them).

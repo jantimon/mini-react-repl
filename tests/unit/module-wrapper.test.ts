@@ -68,8 +68,8 @@ describe('wrapModuleBody', () => {
   });
 
   it('shifts an inline source map in the body to account for the prologue', () => {
-    // The prologue is 5 lines, so body line 1 ends up on wrapped line 6.
-    // The shifted map should have 5 leading semicolons in `mappings`.
+    // The prologue is one line, so body line 1 ends up on wrapped line 2.
+    // The shifted map should have one leading semicolon in `mappings`.
     const original = makeInlineMap({
       version: 3,
       sources: ['App.tsx'],
@@ -77,7 +77,7 @@ describe('wrapModuleBody', () => {
     });
     const out = wrapModuleBody('/App.tsx', `const x = 1;\n${original}`);
     const map = readInlineMap(out);
-    expect(map.mappings).toBe(';;;;;AAAA,BBBB;CCCC,DDDD');
+    expect(map.mappings).toBe(';AAAA,BBBB;CCCC,DDDD');
   });
 
   it('passes through bodies with no inline source map', () => {
