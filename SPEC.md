@@ -1170,3 +1170,95 @@ playground decisions below for completeness.
 | User-file CSS      | Alphabetical concat, one `<style>` per file, hot-swap textContent        | `@import` opens a resolution rabbit hole.                                 |
 | Tailwind           | Not bundled — consumers add via `headHtml`                               | Hard-bundling locks the styling story.                                    |
 | Cold start         | None imposed by library — consumer's `files` prop is the source of truth | Defaults belong in `examples/demo`, not the library.                      |
+
+---
+
+## 21. InspectMode (optional subpath)
+
+`mini-react-repl/inspect` ships an in-iframe element picker that resolves
+clicked DOM nodes back to JSX call sites — file, line, column, component
+name, all source-map decoded.
+
+The full design is in [`INSPECT_SPEC.md`](./INSPECT_SPEC.md). This section
+fits the feature into the rest of the library.
+
+### 21.1 What it adds
+
+- New optional subpath export `mini-react-repl/inspect`, packaged the same
+  way as `/editor-monaco` and `/vendor-default`. Consumers who don't import
+  it pay no host-side cost.
+- `<InspectMode active onElementPicked />` rendered inside
+  `<ReplProvider/>` (or inside `<Repl/>` via the new `children` prop). Also
+  exposed as a default export for `import InspectMode from
+'mini-react-repl/inspect'`.
+- A bundled iframe-side picker script (~11 KB minified, includes
+  `@jridgewell/trace-mapping`). Lazy-injected as a classic `<script>` into
+  the iframe's document on first `<InspectMode active>` toggle —
+  consumers who never import the subpath ship zero picker bytes. The
+  picker is built as IIFE so inline-script append is synchronous and
+  there's no ready-handshake between injection and `inspect:enable`.
+
+### 21.2 Iframe wiring (extends §8)
+
+The picker runs in the same srcdoc as the runtime (§8.1) and uses the same
+`{ __repl: true, kind, ... }` envelope shape as the rest of the protocol
+(§8.4). Two new message kinds:
+
+- Parent → iframe: `inspect:enable` (with optional `overlayClassName`),
+  `inspect:disable`.
+- Iframe → parent: `inspect:pick` (carries `pick: ElementPick`),
+  `inspect:cancel` (Escape pressed while picking).
+
+The runtime's existing `reset` envelope already wipes the iframe's module
+registry; the picker piggybacks on it to clear its source-map cache.
+
+### 21.3 Provider plumbing
+
+`<ReplProvider/>` exposes a stable iframe registry via the actions
+context. `<ReplPreview/>` registers its `<iframe>` element on mount and
+clears it on unmount; `<InspectMode/>` subscribes to the registry to find
+the live `contentWindow` for `postMessage`. The
+registry is `@internal` — not part of the public hook surface.
+
+### 21.4 Source attribution
+
+The runtime's per-module wrapper (§8 / `module-wrapper.ts`) already shifts
+the inline source map by 1 generated line to account for the prologue, so
+the picker does **no** arithmetic on compiled positions: a compiled
+`(line, col)` is fed straight to `originalPositionFor` and the result is
+the source `(fileName, lineNumber, columnNumber)` consumers see. The
+runtime stashes each freshly-wrapped module's text on its
+`ModuleRecord.compiledSource` so the picker can read the inline map
+without re-fetching the blob URL.
+
+### 21.5 Testing strategy (extends §17)
+
+- **Unit:** synthetic source maps fed through `lookupSourcePosition`,
+  V8 stack-string fixtures fed through `parseStack`, hand-shaped fiber
+  trees fed through `walkFibers` / `getComponentName`.
+- **E2E:** the existing `examples/demo` adds an `<InspectMode/>` behind a
+  test hook (`window.__replTest__.setInspectActive(true)`); a Playwright
+  test toggles it, clicks the seed `<h1>`, and asserts
+  `pick.stack[0]` matches the seed source position
+  (`{ fileName: 'App.tsx', lineNumber: 7, componentName: 'App' }`).
+
+### 21.6 Failure modes (out of scope for v1)
+
+- Element rendered via `React.createElement` (no `_debugStack`) → returns
+  `pick` with `stack: []`. Consumers show "no source attribution" instead
+  of nothing.
+- Source map missing/malformed → `lookupSourcePosition` returns `null`;
+  that frame is skipped, walk continues.
+- Vendor / framework frames in the stack → filtered before lookup
+  (any `https:`, `blob:`, `data:`, `about:` etc. URL).
+- Multi-iframe hosts → only the most-recent `<ReplPreview/>` is wired up.
+  No `<InspectMode iframeRef={...} />` override in v1.
+
+### 21.7 Decision log addendum
+
+| Decision                           | Choice                                                                                              | Rejected because                                                                                                                                                               |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Source attribution mechanism       | Decode the inline source map ourselves with `@jridgewell/trace-mapping`                             | V8 only source-maps `Error.stack` in DevTools UI, not from JS. Subtracting a fixed prologue offset is wildly wrong on real files. `jsxDEV` wrappers are React-version-fragile. |
+| Picker delivery                    | Lazy-inject as a classic `<script>` from the inspect subpath on first `<InspectMode active>` toggle | Always-inlining bakes 11 KB into every consumer's srcdoc whether or not they use inspect; injecting from the subpath keeps the cost localized to consumers who opt in.         |
+| Iframe handle for `<InspectMode/>` | Internal provider-shared registry written by `<ReplPreview/>`, read by inspect siblings             | Forcing consumers to plumb an `iframeRef` everywhere is ergonomically bad; a `useReplPreviewIframe()` public hook would expand the API surface for one feature.                |
+| Cross-subpath shared internals     | `splitting: true` in tsup so `ReplActionsContext` is one chunk shared between `.` and `./inspect`   | Without it each subpath inlines its own `createContext()` and `useContext` returns the default value across subpath boundaries.                                                |

@@ -47,6 +47,10 @@
       "node": "./dist/editor-monaco/index.node.js",
       "default": "./dist/editor-monaco/index.js"
     },
+    "./inspect": {
+      "types": "./dist/inspect/index.d.ts",
+      "import": "./dist/inspect/index.js"
+    },
     "./vendor-default": {
       "types": "./dist/vendor-default/index.d.ts",
       "import": "./dist/vendor-default/index.js"
@@ -66,9 +70,10 @@
     "./theme.css": "./dist/theme.css"
   },
   "scripts": {
-    "build": "node scripts/build-runtime.mjs && node scripts/build-default-vendor.mjs && tsup && cp src/theme.css dist/theme.css && node scripts/strip-vendor-sourcemap.mjs",
+    "build": "node scripts/build-runtime.mjs && node scripts/build-picker.mjs && node scripts/build-default-vendor.mjs && tsup && cp src/theme.css dist/theme.css && node scripts/strip-vendor-sourcemap.mjs",
     "build:lib": "tsup",
     "build:runtime": "node scripts/build-runtime.mjs",
+    "build:picker": "node scripts/build-picker.mjs",
     "build:vendor": "node scripts/build-default-vendor.mjs",
     "dev": "pnpm --filter demo dev",
     "test": "vitest run",
@@ -81,6 +86,7 @@
     "format:check": "oxfmt --check"
   },
   "dependencies": {
+    "@jridgewell/trace-mapping": "^0.3.31",
     "@swc/wasm-web": "^1.15.30",
     "es-module-lexer": "^2.1.0",
     "react-refresh": "^0.18.0"

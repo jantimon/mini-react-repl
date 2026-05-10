@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Repl, type Files, type ReplError } from 'mini-react-repl';
 import { defaultVendor } from 'mini-react-repl/vendor-default';
 import { MonacoReplEditor } from 'mini-react-repl/editor-monaco';
+import { InspectMode, type ElementPick } from 'mini-react-repl/inspect';
 import 'mini-react-repl/theme.css';
 
 // Self-host swc-wasm: Vite emits this as a hashed asset in build, and serves
@@ -61,6 +62,7 @@ const TEST_BODY_HTML = `<div id="ext-msg" data-testid="ext-msg"></div>
 export function App() {
   const [files, setFiles] = useState<Files>(HELLO);
   const [lastError, setLastError] = useState<ReplError | null>(null);
+  const [inspectActive, setInspectActive] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const isTestMode =
     typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('test');
@@ -101,6 +103,10 @@ export function App() {
         return true;
       },
       hasIframeRef: () => Boolean(iframeRef.current),
+      setInspectActive: (next: boolean) => setInspectActive(next),
+      // Inspect-mode hooks — used by tests/e2e/inspect.spec.ts. The matching
+      // <InspectMode/> below stashes its picks on `window.__lastPick` for e2e tests to verify
+      getLastPick: () => (window as unknown as { __lastPick?: unknown }).__lastPick ?? null,
     };
   }, [lastError, isTestMode]);
 
@@ -114,6 +120,15 @@ export function App() {
       onPreviewError={setLastError}
       iframeRef={iframeRef}
       {...(isTestMode ? { bodyHtml: TEST_BODY_HTML } : {})}
-    />
+    >
+      <InspectMode
+        active={inspectActive}
+        onElementPicked={(pick: ElementPick) => {
+          (window as unknown as { __lastPick: ElementPick }).__lastPick = pick;
+          setInspectActive(false);
+        }}
+        onCancel={() => setInspectActive(false)}
+      />
+    </Repl>
   );
 }

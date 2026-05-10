@@ -20,6 +20,8 @@ declare global {
       ) => Promise<Array<{ code?: string | { value: string }; severity: number; message: string }>>;
       postToIframe: (payload: unknown) => boolean;
       hasIframeRef: () => boolean;
+      setInspectActive: (next: boolean) => void;
+      getLastPick: () => unknown;
     };
   }
 }

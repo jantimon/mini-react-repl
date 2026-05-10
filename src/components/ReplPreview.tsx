@@ -129,6 +129,10 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
         }
       }
 
+      // Publish the iframe to the provider-shared registry so siblings
+      // like `<InspectMode/>` can find it.
+      actions.iframeRegistry.setIframe(iframe);
+
       if (!iframe) return detachUserRef;
 
       let disposed = false;
@@ -250,6 +254,7 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
         window.removeEventListener('message', onMessage);
         client.dispose();
         if (clientRef.current === client) clientRef.current = null;
+        actions.iframeRegistry.setIframe(null);
         detachUserRef?.();
       };
     },

@@ -48,6 +48,12 @@ type ModuleRecord = {
   blobUrl: string | null;
   /** Whether this module has finished evaluating at least once. */
   evaluated: boolean;
+  /**
+   * Wrapped, import-rewritten module source — exactly the text behind the
+   * current `blobUrl`. Held so the optional inspect picker can decode the
+   * inline source map without re-fetching. `null` until first compile.
+   */
+  compiledSource: string | null;
 };
 
 type ReplRuntime = {
@@ -99,7 +105,7 @@ const modules = new Map<string, ModuleRecord>();
 function ensureRecord(path: string): ModuleRecord {
   let rec = modules.get(path);
   if (!rec) {
-    rec = { path, blobUrl: null, evaluated: false };
+    rec = { path, blobUrl: null, evaluated: false, compiledSource: null };
     modules.set(path, rec);
   }
   return rec;
@@ -152,6 +158,17 @@ function buildBlobUrl(payload: ModulePayload): string {
     code = code.split(`"${dep.specifier}"`).join(`"${targetUrl}"`);
   }
   const wrapped = wrapModuleBody(payload.path, code);
+  // Stash the wrapped source so the inspect picker (and any other in-iframe
+  // tooling) can read the inline source map without re-fetching the blob.
+  // Memory cost is one string per module — acceptable in a dev sandbox.
+  const rec = ensureRecord(payload.path);
+  rec.compiledSource = wrapped;
+  // Notify any in-iframe consumers (e.g. the picker's source-map cache) that
+  // the wrapped source for this path has changed. Dispatch synchronously so
+  // listeners registered before the next `await import(...)` see the update.
+  window.dispatchEvent(
+    new CustomEvent('__repl:module-updated', { detail: { path: payload.path } }),
+  );
   return URL.createObjectURL(new Blob([wrapped], { type: 'text/javascript' }));
 }
 

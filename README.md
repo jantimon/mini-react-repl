@@ -472,6 +472,65 @@ doesn't bundle it.
 
 ---
 
+## Element inspection
+
+Optional subpath that ships an in-iframe element picker. Click an element in
+the live preview, get back the JSX call site that produced it with file, line,
+column, component name making use of the source-maps automatically
+
+```tsx
+import { Repl } from 'mini-react-repl';
+import { InspectMode } from 'mini-react-repl/inspect';
+
+const [picking, setPicking] = useState(false);
+
+<>
+  <button onClick={() => setPicking(true)}>Inspect</button>
+  <Repl files={files} onFilesChange={setFiles} vendor={vendor} editor={MonacoReplEditor}>
+    <InspectMode
+      active={picking}
+      onElementPicked={(pick) => {
+        setPicking(false);
+        // pick.dom.tag    → 'h1'
+        // pick.dom.text   → 'Today is Monday'
+        // pick.stack[0]   → { fileName: 'App.tsx', lineNumber: 7, columnNumber: 7, componentName: 'App' }
+      }}
+      onCancel={() => setPicking(false)}
+    />
+  </Repl>
+</>;
+```
+
+`<InspectMode/>` must live inside the surrounding `<ReplProvider/>` (or
+`<Repl>`, which renders one) — it discovers the live iframe through provider
+context, no ref plumbing required.
+
+The picker is **lazy-injected** into the iframe on first activation —
+consumers who never import `mini-react-repl/inspect` don't pay any byte for
+the inspection feature
+
+### Pick shape
+
+```ts
+type ElementPick = {
+  dom: { tag: string; text: string | null; boundingRect: DOMRectReadOnly };
+  stack: StackFrame[];
+};
+
+type StackFrame = {
+  fileName: string;
+  lineNumber: number;
+  columnNumber: number;
+  componentName: string | null;
+};
+```
+
+The stack is ordered top-down: index 0 is the JSX call closest to the clicked
+DOM node; later frames walk up the React `_debugOwner` chain. Every position
+is in **source space**, ready to hand straight to an "open in editor" link
+
+---
+
 ## Errors
 
 ```tsx

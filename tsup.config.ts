@@ -11,6 +11,9 @@ export default defineConfig({
     // server-side bundlers don't pull in monaco-editor (which touches
     // `window` at module init).
     'editor-monaco/index.node': 'src/editor-monaco/index.node.tsx',
+    // Optional element-picker subpath. Imports trace-mapping but only as a
+    // type — the picker bundle inlines it for the iframe side.
+    'inspect/index': 'src/inspect/index.ts',
     // Browser-targeted default export
     'vendor-default/index': 'src/vendor-default/index.ts',
     'vendor-base': 'src/vendor-base.ts',
@@ -23,7 +26,12 @@ export default defineConfig({
   dts: true,
   sourcemap: true,
   clean: true,
-  splitting: false,
+  // Code splitting extracts shared internals (e.g. `ReplActionsContext`) into
+  // common chunks so that React contexts created once in the main entry are
+  // the *same* context the optional `./inspect` subpath consumes — without it,
+  // each subpath inlines its own duplicate `createContext()` call and
+  // `useContext()` returns the default value across subpath boundaries.
+  splitting: true,
   treeshake: true,
   external: [
     'react',

@@ -40,6 +40,13 @@ export type ReplProps = ReplProviderProps &
     className?: string;
     /** Override the default layout's outer wrapper style. */
     style?: React.CSSProperties;
+    /**
+     * Sibling components rendered inside the surrounding
+     * {@link ReplProvider} after the default layout. Useful for headless
+     * companions such as `<InspectMode/>` that need provider context but
+     * render no DOM of their own.
+     */
+    children?: React.ReactNode;
   };
 
 export function Repl(props: ReplProps): React.ReactElement {
@@ -55,6 +62,7 @@ export function Repl(props: ReplProps): React.ReactElement {
     onDeleteFile,
     className,
     style,
+    children,
     ...providerProps
   } = props;
 
@@ -79,6 +87,7 @@ export function Repl(props: ReplProps): React.ReactElement {
           />
         </div>
       </div>
+      {children}
     </ReplProvider>
   );
 }

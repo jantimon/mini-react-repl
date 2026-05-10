@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@jridgewell/trace-mapping':
+        specifier: ^0.3.31
+        version: 0.3.31
       '@swc/wasm-web':
         specifier: ^1.15.30
         version: 1.15.30

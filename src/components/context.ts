@@ -41,6 +41,33 @@ export type ReplStateContextValue = {
   previewReloadKey: number;
 };
 
+/**
+ * Registry that connects `<ReplPreview/>` to siblings (currently only
+ * `<InspectMode/>`) that need a handle on the live iframe element. The
+ * registry object identity is stable for the provider's lifetime; its
+ * `getIframe()` and subscriber list update as iframes mount and unmount.
+ *
+ * Subscribers are called with the new iframe (or `null` on detach) and
+ * also receive an immediate call with the current value when they
+ * subscribe.
+ *
+ * @internal
+ */
+export type ReplIframeRegistry = {
+  /** Read the currently registered iframe, or `null`. */
+  getIframe: () => HTMLIFrameElement | null;
+  /**
+   * Register an iframe element. `<ReplPreview/>`'s callback ref calls
+   * this with the element on mount and `null` on unmount.
+   */
+  setIframe: (next: HTMLIFrameElement | null) => void;
+  /**
+   * Subscribe to iframe changes. The callback is invoked synchronously
+   * once with the current value. Returns an unsubscribe function.
+   */
+  subscribe: (cb: (iframe: HTMLIFrameElement | null) => void) => () => void;
+};
+
 export type ReplActionsContextValue = {
   /** Logical entry path (snapshotted on first mount). */
   entry: string;
@@ -87,6 +114,14 @@ export type ReplActionsContextValue = {
 
   /** Internal — `<ReplPreview/>` flushes errors here for `useRepl()` consumers. */
   setLastError: (err: ReplError | null) => void;
+
+  /**
+   * Iframe registry shared with `<InspectMode/>` and any other sibling
+   * that needs to talk to the live preview iframe. See
+   * {@link ReplIframeRegistry}.
+   * @internal
+   */
+  iframeRegistry: ReplIframeRegistry;
 };
 
 export const ReplStateContext = createContext<ReplStateContextValue | null>(null);

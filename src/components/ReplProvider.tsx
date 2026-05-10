@@ -17,6 +17,7 @@ import {
   ReplActionsContext,
   ReplStateContext,
   type ReplActionsContextValue,
+  type ReplIframeRegistry,
   type ReplStateContextValue,
 } from './context.ts';
 import type {
@@ -340,6 +341,29 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
     setPreviewReloadKey((k) => k + 1);
   }, []);
 
+  // Stable iframe registry: `<ReplPreview/>` writes the current iframe via
+  // `setIframe`, siblings (e.g. `<InspectMode/>`) subscribe. Identity is
+  // stable for the provider's lifetime so subscribers don't churn.
+  const iframeRegistry = useMemo<ReplIframeRegistry>(() => {
+    let current: HTMLIFrameElement | null = null;
+    const listeners = new Set<(iframe: HTMLIFrameElement | null) => void>();
+    return {
+      getIframe: () => current,
+      setIframe: (next) => {
+        if (current === next) return;
+        current = next;
+        for (const cb of listeners) cb(next);
+      },
+      subscribe: (cb) => {
+        listeners.add(cb);
+        cb(current);
+        return () => {
+          listeners.delete(cb);
+        };
+      },
+    };
+  }, []);
+
   const renameFile = useCallback((oldPath: string, newPath: string) => {
     if (oldPath === newPath) return;
     const files = filesRef.current;
@@ -374,8 +398,9 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
       renameFile,
       reloadPreview,
       setLastError,
+      iframeRegistry,
     }),
-    [bootConfig, setActivePath, setFile, removeFile, renameFile, reloadPreview],
+    [bootConfig, setActivePath, setFile, removeFile, renameFile, reloadPreview, iframeRegistry],
   );
 
   const state = useMemo<ReplStateContextValue>(
