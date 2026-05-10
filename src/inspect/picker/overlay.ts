@@ -17,6 +17,23 @@ const SHOW_DELAY_MS = 100;
 // the element from the DOM in `destroyOverlay`.
 const FADE_MS = 120;
 
+// Position/size animation duration when gliding between elements. Tuned
+// to match Chrome DevTools' inspect overlay — quick enough to feel snappy,
+// slow enough that the eye can track which element is selected.
+const POSITION_MS = 140;
+
+// CSS `transition` shorthand applied via DEFAULT_STYLE. Includes left/top/
+// width/height so the overlay glides between elements when the user moves
+// the cursor across them. When the overlay is invisible, `moveOverlayTo`
+// suppresses the position transitions for one frame so the next fade-in
+// lands at the new element instead of gliding in from the previous one.
+const FULL_TRANSITION =
+  `opacity ${FADE_MS}ms linear, ` +
+  `left ${POSITION_MS}ms ease, ` +
+  `top ${POSITION_MS}ms ease, ` +
+  `width ${POSITION_MS}ms ease, ` +
+  `height ${POSITION_MS}ms ease`;
+
 const DEFAULT_STYLE: Partial<CSSStyleDeclaration> = {
   position: 'fixed',
   // Cancel the popover UA's `inset: 0` so `moveOverlayTo` controls geometry
@@ -36,7 +53,7 @@ const DEFAULT_STYLE: Partial<CSSStyleDeclaration> = {
   // it. Two layers: a tight close shadow for definition, a softer outer one
   // for depth. Subtle on light backgrounds, invisible on dark.
   boxShadow: '0 1px 2px rgba(59, 130, 246, 0.18), 0 4px 12px rgba(59, 130, 246, 0.18)',
-  transition: `opacity ${FADE_MS}ms linear`,
+  transition: FULL_TRANSITION,
   opacity: '0',
   margin: '0',
   padding: '0',
@@ -114,23 +131,41 @@ function ensureOverlay(className: string | undefined): HTMLDivElement {
 export function moveOverlayTo(el: Element | null, className: string | undefined): void {
   if (!el) {
     // Hide is instant (no delay) so leaving the iframe doesn't leave the
-    // overlay lingering. The CSS transition still gives an 80ms fade-out.
+    // overlay lingering. The CSS transition still gives a 120ms fade-out.
+    // The element stays in the DOM so the next reposition can snap to a
+    // new target without a fresh appendChild.
     clearShowTimer();
     if (overlayEl) overlayEl.style.opacity = '0';
     return;
   }
   const rect = el.getBoundingClientRect();
   const ov = ensureOverlay(className);
+
+  if (ov.style.opacity === '1') {
+    // Already visible — let the CSS transition glide left/top/width/height
+    // to the new element so the user's eye can track the move.
+    ov.style.left = rect.left + 'px';
+    ov.style.top = rect.top + 'px';
+    ov.style.width = rect.width + 'px';
+    ov.style.height = rect.height + 'px';
+    return;
+  }
+
+  // Invisible (initial show, or re-entering after a fade-out). Snap the
+  // position so the eventual fade-in appears at the new element instead of
+  // gliding in from wherever it last was. Suppressing the transition for
+  // one reflow is enough; we restore the full transition before the show
+  // timer fires so the fade-in still animates smoothly.
+  const restore = ov.style.transition;
+  ov.style.transition = 'none';
   ov.style.left = rect.left + 'px';
   ov.style.top = rect.top + 'px';
   ov.style.width = rect.width + 'px';
   ov.style.height = rect.height + 'px';
-  // Already visible — keep it visible and let the position update track
-  // instantly across adjacent elements (no re-delay).
-  if (ov.style.opacity === '1') return;
-  // Pending show — let the existing timer fire; the position has already
-  // been updated to the latest element above, so when it fires it'll
-  // appear over the right target.
+  void ov.offsetWidth;
+  ov.style.transition = restore;
+
+  // Pending show — the timer will fire at the snapped position above.
   if (showTimer !== null) return;
   showTimer = setTimeout(() => {
     showTimer = null;

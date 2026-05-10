@@ -38,25 +38,51 @@ type ElementPick = {
 let enabled = false;
 let lastTarget: Element | null = null;
 let overlayClassName: string | undefined;
+let cursorStyleEl: HTMLStyleElement | null = null;
 
 function postToParent(msg: { kind: string; [k: string]: unknown }): void {
   parent.postMessage({ __repl: true, ...msg }, '*');
+}
+
+/**
+ * Force the default arrow cursor across the entire document while inspect
+ * mode is on. User CSS happily applies `cursor: pointer` on links and
+ * buttons, `cursor: text` on inputs, etc. — those are confusing during a
+ * pick because the cursor implies an action that won't happen. The
+ * stylesheet attaches/detaches via `setEnabled` and selects on the
+ * `data-repl-inspect-active` attribute already toggled on `<html>`.
+ */
+function setCursorOverride(active: boolean): void {
+  if (active) {
+    if (cursorStyleEl) return;
+    cursorStyleEl = document.createElement('style');
+    cursorStyleEl.setAttribute('data-repl-inspect-cursor-style', '');
+    cursorStyleEl.textContent =
+      'html[data-repl-inspect-active], html[data-repl-inspect-active] * { cursor: default !important; }';
+    document.head.appendChild(cursorStyleEl);
+  } else {
+    cursorStyleEl?.remove();
+    cursorStyleEl = null;
+  }
 }
 
 function setEnabled(next: boolean): void {
   if (next === enabled) return;
   enabled = next;
   if (enabled) {
-    // Match Chrome DevTools inspect mode: leave the cursor alone, the
-    // overlay rectangle is the only visual signal. A crosshair cursor
-    // implies "click to pin a coordinate"; we want "click any element".
+    // Match Chrome DevTools inspect mode: a single `default` cursor across
+    // the whole document is the right signal — a crosshair implies "click
+    // to pin a coordinate" and the user CSS cursors (pointer on links,
+    // text on inputs) imply actions that won't fire while picking.
     document.documentElement.setAttribute('data-repl-inspect-active', '');
+    setCursorOverride(true);
     window.addEventListener('mousemove', onMouseMove, true);
     window.addEventListener('mouseleave', onMouseLeave, true);
     window.addEventListener('click', onClick, true);
     window.addEventListener('keydown', onKeyDown, true);
   } else {
     document.documentElement.removeAttribute('data-repl-inspect-active');
+    setCursorOverride(false);
     window.removeEventListener('mousemove', onMouseMove, true);
     window.removeEventListener('mouseleave', onMouseLeave, true);
     window.removeEventListener('click', onClick, true);
