@@ -2,6 +2,13 @@
 
 All notable changes to `mini-react-repl`. Dates are YYYY-MM-DD.
 
+## 0.12.1 — 2026-05-12
+
+### Fixed
+
+- `vendor-builder` no longer logs spurious `[vendor-builder] no .d.ts found for '..', skipping` warnings when a transitively walked `.d.ts` imports from `..` (or `.`). The relative-import check only matched `./` / `../` prefixes, so bare `.` / `..` directory specifiers fell through to package resolution and printed a false miss.
+- Directory-form relative imports inside `.d.ts` files now also probe `index.d.mts` and `index.d.cts` (previously only `index.d.ts`), so ESM-only typings packages link up.
+
 ## 0.12.0 — 2026-05-10
 
 ### Changed

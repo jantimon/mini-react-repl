@@ -747,19 +747,32 @@ async function walkFile(
   const localReq = createRequire(pathToFileURL(absPath).href);
 
   for (const imp of imports) {
-    if (imp.startsWith('./') || imp.startsWith('../')) {
+    // ESM also allows bare `.` / `..` as directory specifiers (resolves to
+    // <dir>/index or <parent>/index). The two-prefix check misses them and
+    // would route through walkSpec(), producing a spurious "no .d.ts" warning.
+    const isDotDir = imp === '.' || imp === '..';
+    const isRelative = isDotDir || imp.startsWith('./') || imp.startsWith('../');
+    if (isRelative) {
       const dir = dirname(absPath);
       // .d.ts files often reference companions via `./x.js` (TS convention
       // under "moduleResolution": "node16"/"bundler"); the actual file is
       // `./x.d.ts`. Strip JS-flavored extensions before probing.
       const base = imp.replace(/\.(?:js|mjs|cjs)$/, '');
-      const candidates = [
-        resolve(dir, `${base}.d.ts`),
-        resolve(dir, `${base}.d.mts`),
-        resolve(dir, `${base}.d.cts`),
-        resolve(dir, base, 'index.d.ts'),
-        resolve(dir, imp),
-      ];
+      const candidates = isDotDir
+        ? [
+            resolve(dir, base, 'index.d.ts'),
+            resolve(dir, base, 'index.d.mts'),
+            resolve(dir, base, 'index.d.cts'),
+          ]
+        : [
+            resolve(dir, `${base}.d.ts`),
+            resolve(dir, `${base}.d.mts`),
+            resolve(dir, `${base}.d.cts`),
+            resolve(dir, base, 'index.d.ts'),
+            resolve(dir, base, 'index.d.mts'),
+            resolve(dir, base, 'index.d.cts'),
+            resolve(dir, imp),
+          ];
       for (const c of candidates) {
         if (/\.d\.[mc]?ts$/.test(c) && (await fileExists(c))) {
           await walkFile(c, ownerPkg, ownerRoot, seen, packageJsonEmitted, libs);
