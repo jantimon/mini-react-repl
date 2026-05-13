@@ -724,8 +724,7 @@ async function walkFile(
   const uri = `file:///node_modules/${ownerPkg}/${rel}`;
   libs.push({ path: uri, content });
 
-  const stripped = stripComments(content);
-  const imports = extractImports(stripped);
+  const imports = await extractImports(content);
   const refPaths = extractTripleSlashRefs(content);
 
   for (const ref of refPaths) {
@@ -786,20 +785,46 @@ async function walkFile(
   }
 }
 
-const RE_FROM = /\b(?:from|import)\s*['"]([^'"\n]+)['"]/g;
-const RE_DYN_IMPORT = /\bimport\s*\(\s*['"]([^'"\n]+)['"]\s*\)/g;
 const RE_REF = /\/\/\/\s*<reference\s+(?:path|types)\s*=\s*['"]([^'"\n]+)['"]\s*\/?>/g;
 
-function extractImports(source: string): string[] {
-  const out = new Set<string>();
-  let m: RegExpExecArray | null;
-  RE_FROM.lastIndex = 0;
-  while ((m = RE_FROM.exec(source)) !== null) {
-    if (m[1]) out.add(m[1]);
+let lexerPromise: Promise<typeof import('es-module-lexer')> | null = null;
+function loadLexer(): Promise<typeof import('es-module-lexer')> {
+  if (!lexerPromise) {
+    lexerPromise = (async () => {
+      const lexer = await import('es-module-lexer');
+      await lexer.init;
+      return lexer;
+    })();
   }
-  RE_DYN_IMPORT.lastIndex = 0;
-  while ((m = RE_DYN_IMPORT.exec(source)) !== null) {
-    if (m[1]) out.add(m[1]);
+  return lexerPromise;
+}
+
+/**
+ * Extract `from` / `import` / `import(...)` specifiers from a `.d.ts` source.
+ *
+ * Uses `es-module-lexer` rather than a regex so string- and comment-aware
+ * tokenization handles cases like `readonly ["format", "from", "fx"]` — a
+ * naive `\bfrom\s*['"]` regex matches `from", "fx` inside the literal and
+ * captures `, ` as a phantom specifier (see recharts's
+ * `types/util/svgPropertiesNoEvents.d.ts`).
+ *
+ * Triple-slash `<reference path/types>` directives are not surfaced by the
+ * lexer; {@link extractTripleSlashRefs} handles them separately.
+ */
+export async function extractImports(source: string): Promise<string[]> {
+  const lexer = await loadLexer();
+  let imports: ReturnType<typeof lexer.parse>[0];
+  try {
+    [imports] = lexer.parse(source);
+  } catch {
+    // The lexer rejects some TS-only `.d.ts` shapes (e.g. certain `declare`
+    // forms). Treat as "no imports" — under-walking the type graph is
+    // preferable to surfacing bogus specifiers downstream.
+    return [];
+  }
+  const out = new Set<string>();
+  for (const imp of imports) {
+    if (imp.n) out.add(imp.n);
   }
   return [...out];
 }
@@ -810,72 +835,6 @@ function extractTripleSlashRefs(source: string): string[] {
   let m: RegExpExecArray | null;
   while ((m = RE_REF.exec(source)) !== null) {
     if (m[1]) out.push(m[1]);
-  }
-  return out;
-}
-
-/**
- * Drop block + line comments while keeping triple-slash references intact.
- * Avoids false-positive imports like `from 'react'` mentioned inside JSDoc.
- */
-function stripComments(source: string): string {
-  let out = '';
-  let i = 0;
-  let inString: '"' | "'" | '`' | null = null;
-  let inLine = false;
-  let inBlock = false;
-  while (i < source.length) {
-    const ch = source[i];
-    const next = source[i + 1];
-    if (inLine) {
-      if (ch === '\n') {
-        inLine = false;
-        out += ch;
-      }
-      i++;
-      continue;
-    }
-    if (inBlock) {
-      if (ch === '*' && next === '/') {
-        inBlock = false;
-        i += 2;
-      } else {
-        i++;
-      }
-      continue;
-    }
-    if (inString) {
-      if (ch === '\\') {
-        out += ch + (next ?? '');
-        i += 2;
-        continue;
-      }
-      if (ch === inString) inString = null;
-      out += ch;
-      i++;
-      continue;
-    }
-    if (ch === '"' || ch === "'" || ch === '`') {
-      inString = ch as '"' | "'" | '`';
-      out += ch;
-      i++;
-      continue;
-    }
-    if (ch === '/' && next === '/') {
-      // Keep triple-slash references — they're already extracted from the
-      // raw source elsewhere and we want them not to leak as `from '...'`
-      // matches. Drop the line but preserve newline so line numbers stay.
-      inLine = true;
-      i += 2;
-      continue;
-    }
-    if (ch === '/' && next === '*') {
-      inBlock = true;
-      i += 2;
-      continue;
-    }
-    out += ch;
-    i++;
   }
   return out;
 }

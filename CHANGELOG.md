@@ -2,6 +2,12 @@
 
 All notable changes to `mini-react-repl`. Dates are YYYY-MM-DD.
 
+## 0.12.2 — 2026-05-13
+
+### Fixed
+
+- `vendor-builder` no longer logs `[vendor-builder] no .d.ts found for ', ', skipping` when a transitively walked `.d.ts` declares a tuple containing the string `"from"` (e.g. recharts's `SVGElementPropKeys: readonly ["format", "from", "fx", …]`). The previous extractor used a regex over comment-stripped source, which still matched `from` inside string literals; the import walker now uses `es-module-lexer`, so string- and comment-aware tokenization makes the false positive structurally impossible.
+
 ## 0.12.1 — 2026-05-12
 
 ### Fixed

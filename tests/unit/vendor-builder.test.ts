@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { build } from '../../src/vendor-builder/build.ts';
+import { build, extractImports } from '../../src/vendor-builder/build.ts';
 
 const REQUIRED_CORE = [
   'react',
@@ -195,6 +195,46 @@ export * as lodash from 'lodash-es';
       },
       TIMEOUT,
     );
+  });
+
+  describe('extractImports (transitive .d.ts walker)', () => {
+    it('extracts static, type-only, re-export, and dynamic imports', async () => {
+      const src = `
+        import { A } from 'pkg-a';
+        import type { B } from 'pkg-b';
+        export { C } from './c';
+        export * from 'pkg-d';
+        declare const x: import('pkg-e').Foo;
+      `;
+      const specs = (await extractImports(src)).sort();
+      expect(specs).toEqual(['./c', 'pkg-a', 'pkg-b', 'pkg-d', 'pkg-e']);
+    });
+
+    it('treats `.` and `..` as relative directory specifiers', async () => {
+      const src = `export * from '.'; export { X } from '..';`;
+      expect((await extractImports(src)).sort()).toEqual(['.', '..']);
+    });
+
+    it('ignores `from` / `import` tokens inside string literals', async () => {
+      // Mirrors `recharts/types/util/svgPropertiesNoEvents.d.ts` — the
+      // regex-based predecessor matched `from", "fx"` inside the tuple and
+      // captured `, ` as a phantom specifier, producing
+      // `[vendor-builder] no .d.ts found for ', ', skipping` warnings.
+      const src = `
+        declare const SVGAttrs: readonly ["format", "from", "fx", "import", "fy"];
+        export { SVGAttrs };
+      `;
+      expect(await extractImports(src)).toEqual([]);
+    });
+
+    it('ignores `from` / `import` tokens inside comments', async () => {
+      const src = `
+        // import { fake } from 'should-not-be-extracted';
+        /* import { also } from 'nope'; */
+        import { real } from 'real-pkg';
+      `;
+      expect(await extractImports(src)).toEqual(['real-pkg']);
+    });
   });
 
   describe('Validation errors', () => {
