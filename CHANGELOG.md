@@ -2,6 +2,13 @@
 
 All notable changes to `mini-react-repl`. Dates are YYYY-MM-DD.
 
+## 0.13.0 — 2026-05-16
+
+### Changed
+
+- `<ReplProvider/>` no longer returns `null` while a promise-typed `vendor` prop is pending. Children render immediately; `useRepl()` / `<ReplFileTabs/>` / `<EditorHost/>` are usable right away. `<ReplPreview/>` shows a sized placeholder (`<div class="repl-iframe repl-iframe--placeholder" aria-busy="true">`) until the vendor lands, then mounts the iframe normally. `actions.vendor` is `null` in context during this window — boot-time semantics are preserved by latching on first resolution (subsequent prop swaps still warn in dev).
+- `<ReplProvider/>` now logs `console.error` if the vendor promise rejects, instead of leaving the preview placeholder indefinitely with no diagnostic.
+
 ## 0.12.2 — 2026-05-13
 
 ### Fixed

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Repl, type Files, type ReplError } from 'mini-react-repl';
+import { Repl, type Files, type ReplError, type VendorBundle } from 'mini-react-repl';
 import { defaultVendor } from 'mini-react-repl/vendor-default';
 import { MonacoReplEditor } from 'mini-react-repl/editor-monaco';
 import { InspectMode, type ElementPick } from 'mini-react-repl/inspect';
@@ -66,6 +66,46 @@ export function App() {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const isTestMode =
     typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('test');
+  const isSlowVendor =
+    isTestMode && new URLSearchParams(window.location.search).has('slowVendor');
+
+  // ?slowVendor simulates a code-split / late-fetched vendor: build a
+  // never-resolved promise on first mount and let Playwright drive the
+  // transition via `window.__resolveVendor` / `__rejectVendor`. The
+  // initializer is PURE (no window writes) so it survives StrictMode's
+  // double-invocation of useState initializers — the resolver is exposed
+  // from a useEffect below using the actually-stored state's handles.
+  type SlowVendor = {
+    promise: Promise<{ default: VendorBundle }>;
+    resolve: () => void;
+    reject: (msg?: string) => void;
+  };
+  const [slowVendor] = useState<SlowVendor | null>(() => {
+    if (!isSlowVendor) return null;
+    let resolveFn!: () => void;
+    let rejectFn!: (msg?: string) => void;
+    const promise = new Promise<{ default: VendorBundle }>((resolve, reject) => {
+      resolveFn = () => resolve({ default: defaultVendor });
+      rejectFn = (msg = 'simulated vendor failure') => reject(new Error(msg));
+    });
+    return { promise, resolve: resolveFn, reject: rejectFn };
+  });
+  const vendorProp: VendorBundle | Promise<{ default: VendorBundle }> =
+    slowVendor?.promise ?? defaultVendor;
+
+  useEffect(() => {
+    if (!slowVendor) return;
+    const w = window as unknown as {
+      __resolveVendor?: () => void;
+      __rejectVendor?: (msg?: string) => void;
+    };
+    w.__resolveVendor = slowVendor.resolve;
+    w.__rejectVendor = slowVendor.reject;
+    return () => {
+      delete w.__resolveVendor;
+      delete w.__rejectVendor;
+    };
+  }, [slowVendor]);
 
   // Test hook: when ?test is in the URL, expose imperative actions on
   // window so Playwright can drive the file table without typing into Monaco.
@@ -114,7 +154,7 @@ export function App() {
     <Repl
       files={files}
       onFilesChange={setFiles}
-      vendor={defaultVendor}
+      vendor={vendorProp}
       editor={MonacoReplEditor}
       swcWasmUrl={swcWasmUrl}
       onPreviewError={setLastError}

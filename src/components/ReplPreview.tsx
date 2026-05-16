@@ -58,6 +58,7 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
   const loader = actions.loader;
   const virtualModulesRaw = actions.virtualModules;
   const customShell = actions.shell;
+  const vendor = actions.vendor;
 
   // The iframe runtime mounts a synthetic shell module — never the user's
   // entry directly. `filesForEngine` is the engine-side file table (user
@@ -89,18 +90,20 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
   const clientRef = useRef<TransformClient | null>(null);
 
   // Memoize srcdoc so file edits don't recompute / remount the iframe.
-  // `actions.vendor` is snapshotted on first ReplProvider mount, so its
-  // identity is stable; props.headHtml / props.bodyHtml are still consumer-
-  // owned and trigger a remount on change as documented.
+  // `vendor` is latched on first resolution in `<ReplProvider/>` (may be null
+  // while a promise-typed vendor is pending); when null we render a
+  // placeholder instead of an iframe and skip srcdoc generation entirely.
   const srcdoc = useMemo(
     () =>
-      generatePreviewHtml({
-        vendor: actions.vendor,
-        ...(props.headHtml !== undefined ? { headHtml: props.headHtml } : {}),
-        ...(props.bodyHtml !== undefined ? { bodyHtml: props.bodyHtml } : {}),
-        showErrorOverlay: showOverlay,
-      }),
-    [actions.vendor, props.headHtml, props.bodyHtml, showOverlay],
+      vendor === null
+        ? null
+        : generatePreviewHtml({
+            vendor,
+            ...(props.headHtml !== undefined ? { headHtml: props.headHtml } : {}),
+            ...(props.bodyHtml !== undefined ? { bodyHtml: props.bodyHtml } : {}),
+            showErrorOverlay: showOverlay,
+          }),
+    [vendor, props.headHtml, props.bodyHtml, showOverlay],
   );
 
   // React 19 callback ref with cleanup. When `srcdoc` (or any dep) changes,
@@ -271,21 +274,33 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
 
   return (
     <div className={`repl-preview ${props.className ?? ''}`} style={props.style}>
-      <iframe
-        // `previewReloadKey` is bumped by `reloadPreview()` from `useRepl()`.
-        // Changing the key forces React to unmount the iframe element and
-        // mount a fresh one, which tears down the old TransformClient via
-        // `setupIframe`'s cleanup and runs the cold-boot path again — the
-        // recovery hatch when user code crashes past what HMR can rescue.
-        key={state.previewReloadKey}
-        ref={setupIframe}
-        className="repl-iframe"
-        srcDoc={srcdoc}
-        title="preview"
-        // Inline so the iframe fills its container and drops the default
-        // 2px inset border even when consumers don't import theme.css.
-        style={{ width: '100%', height: '100%', border: 0, display: 'block' }}
-      />
+      {srcdoc === null ? (
+        // Vendor promise still pending. Render a same-shape placeholder so
+        // layout doesn't shift when the iframe lands. `repl-preview` already
+        // paints the background; this empty div fills the slot and carries
+        // an `aria-busy` hint for AT.
+        <div
+          className="repl-iframe repl-iframe--placeholder"
+          aria-busy="true"
+          style={{ width: '100%', height: '100%' }}
+        />
+      ) : (
+        <iframe
+          // `previewReloadKey` is bumped by `reloadPreview()` from `useRepl()`.
+          // Changing the key forces React to unmount the iframe element and
+          // mount a fresh one, which tears down the old TransformClient via
+          // `setupIframe`'s cleanup and runs the cold-boot path again — the
+          // recovery hatch when user code crashes past what HMR can rescue.
+          key={state.previewReloadKey}
+          ref={setupIframe}
+          className="repl-iframe"
+          srcDoc={srcdoc}
+          title="preview"
+          // Inline so the iframe fills its container and drops the default
+          // 2px inset border even when consumers don't import theme.css.
+          style={{ width: '100%', height: '100%', border: 0, display: 'block' }}
+        />
+      )}
     </div>
   );
 }

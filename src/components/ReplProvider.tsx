@@ -73,10 +73,13 @@ export type ReplProviderProps = {
    *   e.g.: `import('mini-react-repl/vendor-default')`
    *   or with a custom vendor bundle: `import('./vendor/repl.vendor.json')`)
    *
-   * The provider renders nothing until the promise resolves; once resolved
-   * it boots normally.
+   * The provider always renders its children. While the promise is pending,
+   * `actions.vendor` is `null` in context — `<ReplPreview/>` shows a sized
+   * placeholder and `<EditorHost/>` mounts without vendor types until the
+   * bundle lands. File CRUD (`useRepl`, `<ReplFileTabs/>`) is unaffected and
+   * works immediately.
    *
-   * **Boot-time only.** Snapshotted on first mount (after promise resolution).
+   * **Boot-time only after resolution.** Latched on first resolution.
    * Subsequent identity changes are ignored (a dev-mode warning fires). To
    * swap vendors, remount the provider with a `key` prop.
    */
@@ -222,41 +225,74 @@ function applyTypesUrl(v: VendorBundle): VendorBundle {
  * </ReplProvider>
  * ```
  */
-export function ReplProvider(props: ReplProviderProps): React.ReactElement | null {
+export function ReplProvider(props: ReplProviderProps): React.ReactElement {
   const vendorProp = props.vendor;
-  const [resolvedVendor, setResolvedVendor] = useState<VendorBundle | undefined>(() =>
+  const [resolvedVendor, setResolvedVendor] = useState<VendorBundle | null>(() =>
     isThenable<VendorBundle | { default: VendorBundle }>(vendorProp)
-      ? undefined
+      ? null
       : applyTypesUrl(vendorProp),
   );
+  // Once vendor has been resolved (sync prop OR promise fulfilled), latch it.
+  // Subsequent prop changes are boot-time-only and ignored, matching `entry`
+  // et al. The ref stores the latched source so dev-warn can compare identity.
+  // `undefined` is the not-yet-latched sentinel; the prop type forbids
+  // `undefined` as a vendor value, so it can't collide with a real prop.
+  const latchedSourceRef = useRef<
+    VendorBundle | PromiseLike<VendorBundle | { default: VendorBundle }> | undefined
+  >(isThenable<VendorBundle | { default: VendorBundle }>(vendorProp) ? undefined : vendorProp);
 
   useEffect(() => {
+    if (latchedSourceRef.current !== undefined) {
+      if (process.env.NODE_ENV !== 'production' && vendorProp !== latchedSourceRef.current) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          '[mini-react-repl] <ReplProvider/> received a new `vendor` prop after first resolution. ' +
+            'vendor is boot-time only; the change is ignored. ' +
+            'To swap, remount the provider with a different `key` prop.',
+        );
+      }
+      return;
+    }
     if (!isThenable<VendorBundle | { default: VendorBundle }>(vendorProp)) {
+      latchedSourceRef.current = vendorProp;
       setResolvedVendor(applyTypesUrl(vendorProp));
       return;
     }
     let cancelled = false;
-    vendorProp.then((v) => {
-      if (!cancelled) setResolvedVendor(applyTypesUrl(unwrapDefault(v)));
-    });
+    vendorProp.then(
+      (v) => {
+        if (cancelled) return;
+        latchedSourceRef.current = vendorProp;
+        setResolvedVendor(applyTypesUrl(unwrapDefault(v)));
+      },
+      (err) => {
+        if (cancelled) return;
+        // eslint-disable-next-line no-console
+        console.error(
+          `[mini-react-repl] <ReplProvider/> vendor promise rejected: ${
+            err instanceof Error ? err.message : String(err)
+          }. Preview will stay in its pending placeholder; pass a resolved vendor (or a promise that resolves) to recover.`,
+        );
+      },
+    );
     return () => {
       cancelled = true;
     };
   }, [vendorProp]);
 
-  if (!resolvedVendor) return null;
   return <ReplProviderInner {...props} vendor={resolvedVendor} />;
 }
 
-type ReplProviderInnerProps = Omit<ReplProviderProps, 'vendor'> & { vendor: VendorBundle };
+type ReplProviderInnerProps = Omit<ReplProviderProps, 'vendor'> & { vendor: VendorBundle | null };
 
 function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
   // Boot config is snapshotted on first render. Subsequent prop changes are
   // ignored (with a dev-mode warning) because changing them post-mount would
-  // require a full iframe + swc-wasm reboot.
+  // require a full iframe + swc-wasm reboot. `vendor` is NOT in here — it
+  // may legitimately arrive late via a promise (latched in the outer
+  // `<ReplProvider/>`) and is forwarded through props on every render.
   const [bootConfig] = useState(() => ({
     entry: props.entry ?? 'App.tsx',
-    vendor: props.vendor,
     swcWasmUrl: props.swcWasmUrl,
     loader: props.loader,
     virtualModulesProp: props.virtualModules,
@@ -277,7 +313,6 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
         );
       };
       if ((props.entry ?? 'App.tsx') !== bootConfig.entry) warn('entry');
-      if (props.vendor !== bootConfig.vendor) warn('vendor');
       if (props.swcWasmUrl !== bootConfig.swcWasmUrl) warn('swcWasmUrl');
       if (props.loader !== bootConfig.loader) warn('loader');
       if (props.virtualModules !== bootConfig.virtualModulesProp) warn('virtualModules');
@@ -285,7 +320,6 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
       if (props.languages !== bootConfig.languages) warn('languages');
     }, [
       props.entry,
-      props.vendor,
       props.swcWasmUrl,
       props.loader,
       props.virtualModules,
@@ -386,7 +420,7 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
   const actions = useMemo<ReplActionsContextValue>(
     () => ({
       entry: bootConfig.entry,
-      vendor: bootConfig.vendor,
+      vendor: props.vendor,
       swcWasmUrl: bootConfig.swcWasmUrl,
       loader: bootConfig.loader,
       virtualModules: bootConfig.virtualModules,
@@ -400,7 +434,16 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
       setLastError,
       iframeRegistry,
     }),
-    [bootConfig, setActivePath, setFile, removeFile, renameFile, reloadPreview, iframeRegistry],
+    [
+      bootConfig,
+      props.vendor,
+      setActivePath,
+      setFile,
+      removeFile,
+      renameFile,
+      reloadPreview,
+      iframeRegistry,
+    ],
   );
 
   const state = useMemo<ReplStateContextValue>(

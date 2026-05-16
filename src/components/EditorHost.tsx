@@ -48,8 +48,9 @@ export function EditorHost(props: EditorHostProps): React.ReactElement | null {
   // resolves to one, or a JSON-import shape (`{ default: TypeBundle }`) — the
   // latter shows up when consumers do `fetch('/.../repl.types.json').then(r =>
   // r.json())` or `import('./.../repl.types.json')`. Editors only see the
-  // resolved value.
-  const rawTypes = actions.vendor.types;
+  // resolved value. `actions.vendor` may also be null until a promise-typed
+  // vendor lands; the editor mounts without types and rebinds when it does.
+  const rawTypes = actions.vendor?.types;
   const [types, setTypes] = useState<TypeBundle | undefined>(() =>
     isResolvedTypes(rawTypes) ? rawTypes : undefined,
   );
