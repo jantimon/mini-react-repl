@@ -66,8 +66,7 @@ export function App() {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const isTestMode =
     typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('test');
-  const isSlowVendor =
-    isTestMode && new URLSearchParams(window.location.search).has('slowVendor');
+  const isSlowVendor = isTestMode && new URLSearchParams(window.location.search).has('slowVendor');
 
   // ?slowVendor simulates a code-split / late-fetched vendor: build a
   // never-resolved promise on first mount and let Playwright drive the
