@@ -28,15 +28,23 @@ export type VendorBundle = {
    * consume this to provide red squiggles and hover signatures for the
    * vendor packages. Editors that don't support it ignore the field.
    *
-   * Accepts a sync `TypeBundle`, a `Promise<TypeBundle>`, or a JSON-import
-   * result (`{ default: TypeBundle }`). For custom-vendor builds the CLI
-   * writes the payload to `<outDir>/repl.types.json` and embeds the URL as
-   * {@link typesUrl}; the library fetches it automatically, so consumers
-   * normally leave this field unset.
+   * Accepts:
+   * - a sync `TypeBundle`,
+   * - a `Promise<TypeBundle>` or JSON-import result (`{ default: TypeBundle }`),
+   * - or a **function** returning either of the above — invoked lazily by
+   *   the library when an editor adapter actually mounts. Preview-only
+   *   consumers never trigger it. The default vendor uses this form so the
+   *   `.d.ts` chunk only downloads when the editor needs it.
    *
-   * The default vendor ships with this populated inline.
+   * For custom-vendor builds the CLI writes the payload to
+   * `<outDir>/repl.types.json` and embeds the URL as {@link typesUrl}; the
+   * library wraps that into a lazy fetch automatically, so consumers
+   * normally leave this field unset.
    */
-  types?: TypeBundle | PromiseLike<TypeBundle | { default: TypeBundle }>;
+  types?:
+    | TypeBundle
+    | PromiseLike<TypeBundle | { default: TypeBundle }>
+    | (() => TypeBundle | PromiseLike<TypeBundle | { default: TypeBundle }>);
   /**
    * Optional URL of a hosted `repl.types.json`. When set and {@link types}
    * is unset, the library fetches and registers the payload automatically.

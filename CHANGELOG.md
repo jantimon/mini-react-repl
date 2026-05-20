@@ -2,6 +2,18 @@
 
 All notable changes to `mini-react-repl`. Dates are YYYY-MM-DD.
 
+## 0.14.0 — 2026-05-20
+
+### Changed
+
+- `mini-react-repl/vendor-default` no longer ships the `.d.ts` payload as part of the statically-imported module. `defaultVendor.types` is now a function (`loadVendorTypes`) that dynamic-imports the payload from a separate code-split chunk; the library invokes it from `<EditorHost/>` only when an editor adapter actually mounts. REPL-only consumers (e.g. `<ReplPreview/>` without an editor) — and consumers wiring a custom editor that ignores types — no longer pay the ~100 kB gzipped types cost in their bundle. `<Repl vendor={defaultVendor}/>` works unchanged.
+- `vendor.typesUrl` (custom-vendor builds emitted by `repl-vendor-build --bundle-out`) is now fetched lazily on the same trigger: `ReplProvider` installs a function under `vendor.types` instead of starting the fetch the moment the vendor resolves. Consumers that show only `<ReplPreview/>` no longer trigger the `repl.types.json` request at all.
+- `VendorBundle.types` (`src/types.ts`) widens to also accept `() => TypeBundle | PromiseLike<TypeBundle | { default: TypeBundle }>`. The existing `TypeBundle` / `PromiseLike<TypeBundle>` forms keep working unchanged.
+
+### Added
+
+- `loadVendorTypes` named export on `mini-react-repl/vendor-default` — call it directly to warm the types chunk on hover, idle time, or any other consumer-chosen trigger.
+
 ## 0.13.1 — 2026-05-20
 
 ### Fixed

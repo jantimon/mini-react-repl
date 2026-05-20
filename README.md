@@ -244,10 +244,15 @@ import { defaultVendor } from 'mini-react-repl/vendor-default'
 
 includes: `react@19`, `react-dom@19`, `react/jsx-runtime`,
 `react/jsx-dev-runtime`, `date-fns@3`, `dayjs@1`, `lodash-es@4`. inlined as
-base64 data URLs so it works under srcdoc with zero hosting setup. ~400KB
+base64 data URLs so it works under srcdoc with zero hosting setup. ~150 kB
 gzipped JS, plus pre-baked `.d.ts` (`vendor.types`) so Monaco shows real
-red squiggles + hover signatures for the same packages — also opt-in via
-this subpath import.
+red squiggles + hover signatures for the same packages.
+
+the `.d.ts` payload (~100 kB gzipped) lives in a separate code-split chunk
+and only loads when an editor adapter actually mounts — preview-only or
+non-Monaco consumers never pay for it. need to warm it earlier (prefetch on
+hover, idle time, etc.)? import `loadVendorTypes` from the same subpath and
+call it whenever.
 
 if your demo needs literally only those libs, stop reading.
 

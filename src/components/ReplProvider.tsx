@@ -183,31 +183,32 @@ function unwrapDefault(v: VendorBundle | { default: VendorBundle }): VendorBundl
 }
 
 /**
- * If the vendor declares a hosted `typesUrl` and no inline `types`, kick off
- * a fetch and stash the resulting promise in `types`. {@link EditorHost}
- * already resolves promise-typed `types`, so the editor sees the registered
- * libs as soon as the network round-trip completes — in parallel to swc-wasm
- * boot, iframe mount, and Monaco initialization.
+ * If the vendor declares a hosted `typesUrl` and no inline `types`, install
+ * a lazy fetcher under `types`. {@link EditorHost} invokes the function
+ * once, when an editor adapter mounts — preview-only / non-Monaco consumers
+ * never trigger the network round-trip. The fetch then runs in parallel to
+ * swc-wasm boot, iframe mount, and Monaco initialization.
  */
 function applyTypesUrl(v: VendorBundle): VendorBundle {
   if (v.types !== undefined || v.typesUrl === undefined) return v;
   const url = v.typesUrl;
   return {
     ...v,
-    types: fetch(url)
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json() as Promise<TypeBundle>;
-      })
-      .catch((err) => {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[mini-react-repl] failed to load vendor types from '${url}': ${
-            err instanceof Error ? err.message : String(err)
-          }. Editor will boot without vendor type info.`,
-        );
-        return { libs: [] };
-      }),
+    types: () =>
+      fetch(url)
+        .then((r) => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json() as Promise<TypeBundle>;
+        })
+        .catch((err) => {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[mini-react-repl] failed to load vendor types from '${url}': ${
+              err instanceof Error ? err.message : String(err)
+            }. Editor will boot without vendor type info.`,
+          );
+          return { libs: [] };
+        }),
   };
 }
 

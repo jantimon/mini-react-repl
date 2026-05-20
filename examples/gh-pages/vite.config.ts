@@ -1,8 +1,17 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+const { version } = JSON.parse(
+  readFileSync(fileURLToPath(new URL('../../package.json', import.meta.url)), 'utf8'),
+);
+
 export default defineConfig({
   base: '/mini-react-repl/',
+  define: {
+    __REPL_VERSION__: JSON.stringify(version),
+  },
   plugins: [react()],
   server: {
     port: 5176,

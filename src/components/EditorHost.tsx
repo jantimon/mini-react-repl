@@ -45,10 +45,12 @@ export function EditorHost(props: EditorHostProps): React.ReactElement | null {
   const setFile = actions.setFile;
 
   // Resolve `vendor.types` once. It may be a sync TypeBundle, a Promise that
-  // resolves to one, or a JSON-import shape (`{ default: TypeBundle }`) — the
-  // latter shows up when consumers do `fetch('/.../repl.types.json').then(r =>
-  // r.json())` or `import('./.../repl.types.json')`. Editors only see the
-  // resolved value. `actions.vendor` may also be null until a promise-typed
+  // resolves to one, a JSON-import shape (`{ default: TypeBundle }`), or a
+  // function returning either — the function form lets the library defer
+  // expensive work (dynamic-import of an inlined .d.ts chunk, fetch of a
+  // hosted `repl.types.json`) until an editor actually mounts. We invoke the
+  // function here, inside the effect, so REPL-only / no-editor consumers
+  // never trigger it. `actions.vendor` may be null until a promise-typed
   // vendor lands; the editor mounts without types and rebinds when it does.
   const rawTypes = actions.vendor?.types;
   const [types, setTypes] = useState<TypeBundle | undefined>(() =>
@@ -59,12 +61,13 @@ export function EditorHost(props: EditorHostProps): React.ReactElement | null {
       setTypes(undefined);
       return;
     }
-    if (isResolvedTypes(rawTypes)) {
-      setTypes(rawTypes);
+    const resolved = typeof rawTypes === 'function' ? rawTypes() : rawTypes;
+    if (isResolvedTypes(resolved)) {
+      setTypes(resolved);
       return;
     }
     let cancelled = false;
-    Promise.resolve(rawTypes).then((v) => {
+    Promise.resolve(resolved).then((v) => {
       if (!cancelled) setTypes(unwrapTypesDefault(v));
     });
     return () => {

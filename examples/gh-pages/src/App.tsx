@@ -182,6 +182,7 @@ export function App() {
       >
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
           <strong style={{ fontSize: 16 }}>mini-react-repl</strong>
+          <span style={{ color: 'light-dark(#9aa, #667)', fontSize: 12 }}>v{__REPL_VERSION__}</span>
           <span style={{ color: 'light-dark(#4b5563, #aab)', fontSize: 13 }}>
             browser-only React TSX REPL
           </span>
