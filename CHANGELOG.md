@@ -2,6 +2,12 @@
 
 All notable changes to `mini-react-repl`. Dates are YYYY-MM-DD.
 
+## 0.13.1 — 2026-05-20
+
+### Fixed
+
+- `mini-react-repl/editor-monaco` SSR stub (`node` export condition) no longer trips React hydration when consumers omit `theme`. The real client adapter renders a Fragment of `<div>` + `<ColorSchemeWatcher>` when `theme === undefined`, but the SSR stub only emitted the `<div>` — a Fragment child-count mismatch that React flagged at hydration. The stub now mirrors the client's Fragment shape exactly (watcher's render is pure JSX; all DOM work lives in its ref callback, which doesn't fire on the server).
+
 ## 0.13.0 — 2026-05-16
 
 ### Changed
