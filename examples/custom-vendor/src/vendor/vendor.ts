@@ -5,12 +5,10 @@
  *   pnpm build:vendor
  *
  * which expands to:
- *   repl-vendor-build src/vendor/vendor.ts --out public/vendor \
- *     --bundle-out src/vendor/repl.vendor.json
+ *   repl-vendor-build src/vendor/vendor.ts --out src/vendor/repl.vendor.json
  *
- * JS chunks + repl.types.json land in public/vendor/ (served at /vendor/*).
- * The bundler-imported import-map JSON lands next to this file at
- * src/vendor/repl.vendor.json so App.tsx can `import` it directly.
+ * Output is a single JSON file with `data:` URLs for every vendor entry,
+ * imported directly by App.tsx — no static-hosting setup required.
  */
 
 // React + react-dom + react-refresh + jsx-runtime — required for the iframe

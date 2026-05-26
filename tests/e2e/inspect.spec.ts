@@ -48,20 +48,13 @@ test.describe('mini-react-repl/inspect', () => {
 
     // Wait until the picker has actually installed its capture-phase click
     // handler in the iframe — easiest signal: the documentElement carries
-    // the data attribute the picker sets on enable.
-    await expect
-      .poll(
-        () =>
-          page.evaluate(() => {
-            const iframe = document.querySelector('iframe.repl-iframe') as HTMLIFrameElement | null;
-            return (
-              iframe?.contentDocument?.documentElement?.hasAttribute('data-repl-inspect-active') ??
-              false
-            );
-          }),
-        { timeout: 5_000 },
-      )
-      .toBe(true);
+    // the data attribute the picker sets on enable. Read inside the iframe
+    // because `iframe.contentDocument` is null under sandbox="allow-scripts".
+    await expect(preview(page).locator('html')).toHaveAttribute(
+      'data-repl-inspect-active',
+      '',
+      { timeout: 5_000 },
+    );
 
     await h1.click();
 
@@ -87,23 +80,71 @@ test.describe('mini-react-repl/inspect', () => {
     expect(top.componentName).toBe('App');
   });
 
+  test('overlay reappears after a pick deactivates inspect', async ({ page }) => {
+    // Regression guard: every activation cycle is a fresh overlay element
+    // (the previous one fades out + removes after disable). If the second-
+    // cycle overlay ever fails to paint, this test catches it.
+    await gotoDemo(page);
+    const h1 = preview(page).locator('h1');
+    const counter = preview(page).locator('[data-testid="counter"]');
+    await expect(h1).toContainText(/Today is/i, { timeout: 30_000 });
+
+    const readOverlay = async () => {
+      const ov = preview(page).locator('[data-repl-inspect-overlay]');
+      if ((await ov.count()) === 0) return null;
+      return ov.evaluate((el) => {
+        const e = el as HTMLElement;
+        const cs = getComputedStyle(e);
+        return {
+          opacity: e.style.opacity,
+          display: cs.display,
+          backgroundColor: cs.backgroundColor,
+          boxShadow: cs.boxShadow,
+          width: e.style.width,
+        };
+      });
+    };
+
+    // First cycle: enable → hover → click. The pick auto-disables inspect.
+    await page.evaluate(() => {
+      delete window.__lastPick;
+      window.__replTest__.setInspectActive(true);
+    });
+    await h1.hover();
+    await expect
+      .poll(async () => (await readOverlay())?.opacity ?? null, { timeout: 5_000 })
+      .toBe('1');
+    await h1.click();
+    await expect
+      .poll(() => page.evaluate(() => window.__lastPick?.dom?.tag ?? null), { timeout: 5_000 })
+      .toBe('h1');
+
+    // Second cycle: re-enable, hover a DIFFERENT element so we get a fresh
+    // mousemove that lands on a fiber-bearing target (h1's lastTarget was
+    // cleared on disable, but counter forces a distinct enter event).
+    await page.evaluate(() => window.__replTest__.setInspectActive(true));
+    await counter.hover();
+
+    await expect
+      .poll(async () => (await readOverlay())?.opacity ?? null, { timeout: 5_000 })
+      .toBe('1');
+    const overlay = await readOverlay();
+    expect(overlay!.display).not.toBe('none');
+    expect(overlay!.backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+    expect(overlay!.boxShadow).not.toBe('none');
+  });
+
   test('hovering shows the default bluish overlay over the target', async ({ page }) => {
     await gotoDemo(page);
     const h1 = preview(page).locator('h1');
     await expect(h1).toContainText(/Today is/i, { timeout: 30_000 });
 
     await page.evaluate(() => window.__replTest__.setInspectActive(true));
-    await expect
-      .poll(() =>
-        page.evaluate(() => {
-          const iframe = document.querySelector('iframe.repl-iframe') as HTMLIFrameElement | null;
-          return (
-            iframe?.contentDocument?.documentElement?.hasAttribute('data-repl-inspect-active') ??
-            false
-          );
-        }),
-      )
-      .toBe(true);
+    await expect(preview(page).locator('html')).toHaveAttribute(
+      'data-repl-inspect-active',
+      '',
+      { timeout: 5_000 },
+    );
 
     await h1.hover();
 
@@ -112,21 +153,20 @@ test.describe('mini-react-repl/inspect', () => {
     // and shadow. `getComputedStyle().opacity` would interpolate during the
     // CSS fade and produce values like "0.43" mid-transition — the inline
     // value flips cleanly from "0" to "1".
-    const readOverlay = () =>
-      page.evaluate(() => {
-        const iframe = document.querySelector('iframe.repl-iframe') as HTMLIFrameElement | null;
-        const ov = iframe?.contentDocument?.querySelector(
-          '[data-repl-inspect-overlay]',
-        ) as HTMLElement | null;
-        if (!ov || !iframe?.contentWindow) return null;
-        const cs = iframe.contentWindow.getComputedStyle(ov);
+    const readOverlay = async () => {
+      const ov = preview(page).locator('[data-repl-inspect-overlay]');
+      if ((await ov.count()) === 0) return null;
+      return ov.evaluate((el) => {
+        const e = el as HTMLElement;
+        const cs = getComputedStyle(e);
         return {
-          opacity: ov.style.opacity,
+          opacity: e.style.opacity,
           backgroundColor: cs.backgroundColor,
           boxShadow: cs.boxShadow,
-          width: ov.style.width,
+          width: e.style.width,
         };
       });
+    };
 
     // The picker waits ~100ms after hover before flipping opacity to "1"
     // (the no-flash delay). Poll up to 5s, well past that.

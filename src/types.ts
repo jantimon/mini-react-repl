@@ -6,22 +6,18 @@
  */
 
 /**
- * A standard import-map plus an optional resolution base.
+ * A standard import-map plus an optional `.d.ts` payload.
  *
- * `importMap` matches the W3C Import Maps shape exactly, so any URL the
- * browser can fetch (https, data:, blob:, relative) is valid as a target.
+ * `importMap` matches the W3C Import Maps shape exactly. Every entry must be
+ * a URL the browser can fetch from a sandboxed iframe; in practice that
+ * means `data:` URLs (what `repl-vendor-build` produces) or fully-qualified
+ * `https://` URLs with permissive CORS headers.
  *
  * @see https://github.com/WICG/import-maps
  */
 export type VendorBundle = {
-  /** Standard import-map JSON: `{ imports: { 'react': '/vendor/react.js' } }`. */
+  /** Standard import-map JSON: `{ imports: { 'react': 'data:text/javascript;base64,...' } }`. */
   importMap: ImportMap;
-  /**
-   * Optional base URL applied to relative entries in `importMap.imports`
-   * when resolved inside the iframe. Set this when vendor files are hosted
-   * under a non-default path (e.g. `/static/vendor`).
-   */
-  baseUrl?: string;
   /**
    * Optional `.d.ts` payload paired with the vendor's runtime modules.
    * Editors that support it (e.g. {@link https://www.npmjs.com/package/monaco-editor | Monaco})
@@ -35,32 +31,11 @@ export type VendorBundle = {
    *   the library when an editor adapter actually mounts. Preview-only
    *   consumers never trigger it. The default vendor uses this form so the
    *   `.d.ts` chunk only downloads when the editor needs it.
-   *
-   * For custom-vendor builds the CLI writes the payload to
-   * `<outDir>/repl.types.json` and embeds the URL as {@link typesUrl}; the
-   * library wraps that into a lazy fetch automatically, so consumers
-   * normally leave this field unset.
    */
   types?:
     | TypeBundle
     | PromiseLike<TypeBundle | { default: TypeBundle }>
     | (() => TypeBundle | PromiseLike<TypeBundle | { default: TypeBundle }>);
-  /**
-   * Optional URL of a hosted `repl.types.json`. When set and {@link types}
-   * is unset, the library fetches and registers the payload automatically.
-   *
-   * Emitted by `repl-vendor-build` into the bundler-imported import-map
-   * JSON, so:
-   *
-   * ```tsx
-   * import vendor from './vendor/repl.vendor.json';
-   * <Repl vendor={vendor} ... />
-   * ```
-   *
-   * is enough — types load in parallel without any consumer-side fetch.
-   * Override by setting `types` directly.
-   */
-  typesUrl?: string;
 };
 
 /**

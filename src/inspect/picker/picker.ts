@@ -1,12 +1,13 @@
 /**
  * In-iframe element picker.
  *
- * Bundled by `scripts/build-picker.mjs` and inlined as a third
- * `<script type="module">` in the iframe srcdoc (after preamble + runtime).
- * Stays dormant until the host posts `inspect:enable`. On click, walks the
- * React fiber chain, parses each fiber's `_debugStack`, and decodes the
- * frames against the inline source map of the wrapped module — yielding
- * source-space `(fileName, line, column)` for the host to consume.
+ * Bundled by `scripts/build-picker.mjs` as an ESM module. The host's
+ * `<InspectMode/>` posts the bundle source to the iframe runtime, which
+ * `import()`s it via a blob URL on first activation. Stays dormant until
+ * the host then posts `inspect:enable`. On click, walks the React fiber
+ * chain, parses each fiber's `_debugStack`, and decodes the frames against
+ * the inline source map of the wrapped module — yielding source-space
+ * `(fileName, line, column)` for the host to consume.
  *
  * @internal
  */
@@ -214,6 +215,8 @@ function snippetFromElement(el: Element): string | null {
 }
 
 window.addEventListener('message', (event: MessageEvent) => {
+  // Security invariant: only accept messages from the embedding window.
+  if (event.source !== window.parent) return;
   const data = event.data as {
     __repl?: unknown;
     kind?: unknown;
@@ -239,6 +242,7 @@ window.addEventListener('__repl:module-updated', (event) => {
 // On reset (the runtime drops every module record), wipe the whole cache.
 // We piggyback on the same message bus the runtime uses.
 window.addEventListener('message', (event: MessageEvent) => {
+  if (event.source !== window.parent) return;
   const data = event.data as { __repl?: unknown; kind?: unknown } | null;
   if (data?.__repl === true && data.kind === 'reset') clearTraceMapCache();
 });

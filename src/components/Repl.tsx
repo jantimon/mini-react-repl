@@ -58,6 +58,9 @@ export function Repl(props: ReplProps): React.ReactElement {
     onPreviewError,
     onMounted,
     iframeRef,
+    sandbox,
+    allow,
+    referrerPolicy,
     onAddFile,
     onDeleteFile,
     className,
@@ -84,6 +87,9 @@ export function Repl(props: ReplProps): React.ReactElement {
             {...(onPreviewError ? { onPreviewError } : {})}
             {...(onMounted ? { onMounted } : {})}
             {...(iframeRef ? { iframeRef } : {})}
+            {...(sandbox !== undefined ? { sandbox } : {})}
+            {...(allow !== undefined ? { allow } : {})}
+            {...(referrerPolicy !== undefined ? { referrerPolicy } : {})}
           />
         </div>
       </div>

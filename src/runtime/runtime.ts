@@ -138,6 +138,9 @@ window.__repl__ = replRuntime;
 
 let root: ReactDOMClient.Root | null = null;
 let entryPath: string | null = null;
+// Optional inspect picker: installed lazily via the `inspect:install` message
+// from the host. Stays false until the first `<InspectMode active>` toggle.
+let pickerInstalled = false;
 
 /**
  * Build the wrapped, import-rewritten module body and turn it into a
@@ -304,6 +307,9 @@ function postToParent(msg: FromIframe): void {
 }
 
 window.addEventListener('message', async (event: MessageEvent) => {
+  // Security invariant: only accept messages from the embedding window.
+  // Without this check any frame can spoof `__repl` envelopes.
+  if (event.source !== window.parent) return;
   const data = event.data;
   if (!data || data.__repl !== true) return;
   const msg = data as ToIframe & { __repl: true };
@@ -382,6 +388,27 @@ window.addEventListener('message', async (event: MessageEvent) => {
       cssTags.clear();
       hideOverlay();
       entryPath = null;
+      break;
+    }
+    case 'inspect:install': {
+      if (!pickerInstalled) {
+        try {
+          const blob = new Blob([msg.code], { type: 'text/javascript' });
+          const url = URL.createObjectURL(blob);
+          await import(/* @vite-ignore */ url);
+          pickerInstalled = true;
+        } catch (err) {
+          reportRuntimeError({
+            kind: 'runtime',
+            message: err instanceof Error ? err.message : String(err),
+            stack: err instanceof Error ? (err.stack ?? '') : '',
+          });
+          return;
+        }
+      }
+      // Always ack — even on a no-op re-install — so the host can chain
+      // `inspect:enable` deterministically.
+      postToParent({ kind: 'inspect:installed' });
       break;
     }
   }

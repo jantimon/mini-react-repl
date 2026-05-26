@@ -225,6 +225,36 @@ export function Counter() {
     await expect(preview(page).locator('[data-testid=ext-msg]')).toHaveText('round-two');
   });
 
+  test('JS importing a sibling CSS file applies styles without a resolve error', async ({
+    page,
+  }) => {
+    await gotoDemo(page);
+    await expect(preview(page).locator('h1')).toContainText(/Today is/i, { timeout: 30_000 });
+
+    // Drop a CSS file into the project, then have App.tsx import it. Before
+    // the fix, the compiled blob would still contain `import './App.css'`,
+    // which the browser can't resolve against a blob: URL ("Invalid relative
+    // url or base scheme isn't hierarchical").
+    await page.evaluate(() => {
+      window.__replTest__.setFile('App.css', `[data-testid=styled] { color: rgb(123, 45, 67); }`);
+      window.__replTest__.setFile(
+        'App.tsx',
+        `import './App.css'
+export default function App() {
+  return <h1 data-testid="styled">styled</h1>
+}`,
+      );
+    });
+
+    const h1 = preview(page).locator('[data-testid=styled]');
+    await expect(h1).toHaveText('styled');
+    await expect(h1).toHaveCSS('color', 'rgb(123, 45, 67)');
+
+    // And no error surfaced through the overlay channel.
+    const err = await page.evaluate(() => window.__replTest__.getError());
+    expect(err).toBeNull();
+  });
+
   test('Monaco surfaces a real type error from vendor types', async ({ page }) => {
     await gotoDemo(page);
     await expect(preview(page).locator('h1')).toContainText(/Today is/i, { timeout: 30_000 });

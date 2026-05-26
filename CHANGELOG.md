@@ -2,6 +2,47 @@
 
 All notable changes to `mini-react-repl`. Dates are YYYY-MM-DD.
 
+## 0.15.0 — 2026-05-26
+
+### Security
+
+- The preview iframe now ships with `sandbox="allow-scripts allow-forms"` by default. Previously the `srcdoc` iframe inherited the embedder's origin and could read parent cookies, mutate `window.parent.document`, and call host APIs with the user's session — none of that holds any more. User code runs cross-origin to the embedder with an opaque origin. `allow-forms` is included so React `<form onSubmit>` handlers fire (Chromium suppresses the submit event entirely without it); `allow-same-origin`, `allow-top-navigation`, and `allow-popups` are deliberately excluded.
+- The runtime postMessage listener (`runtime.ts`) and the inspect picker's listeners now reject any event whose `event.source` isn't `window.parent`. Without this, any frame on the page could spoof `__repl: true` envelopes into the iframe runtime.
+- New e2e suite at `tests/e2e/sandbox.spec.ts` asserts the default attributes are on the iframe and that user code attempting `window.parent.document.body.style.background = '…'` raises a runtime error without mutating the parent page.
+
+### Added
+
+- `<ReplPreview/>` accepts three new iframe-attribute props, all overridable per-mount:
+  - `sandbox?: string | null` — defaults to `'allow-scripts allow-forms'`. Pass `null` to drop the attribute entirely (escape hatch for consumers that need same-origin DOM access; doing so makes user code able to act as the embedder).
+  - `allow?: string` — Permissions-Policy delegated to the iframe via the `allow` attribute. Defaults to `''` (deny all delegated features).
+  - `referrerPolicy?: React.HTMLAttributeReferrerPolicy` — defaults to `'no-referrer'` so user code can't leak the embedder URL via outbound requests.
+- `<Repl>` forwards all three to its inner `<ReplPreview/>`.
+
+### Changed
+
+- `mini-react-repl/inspect` no longer injects the picker by mutating `iframe.contentDocument`. Cross-origin sandboxed iframes return `null` from `contentDocument`, so the old DOM-injection path was incompatible with the new sandbox default. The host now ships the picker source via a new `inspect:install` postMessage envelope; the runtime builds a `blob:` URL and `import()`s it on first activation. The lazy semantics are preserved — consumers who never mount `<InspectMode/>` never pay the picker cost. `ensurePickerInstalled(iframe)` now returns `Promise<boolean>` instead of `boolean`.
+- The picker bundle (`scripts/build-picker.mjs`) ships as ESM instead of an IIFE so it can be dynamic-imported via a blob URL inside the iframe runtime.
+- The vendor pipeline is **inline-only**. `repl-vendor-build` always emits `data:text/javascript;base64,…` URLs into a single bundle JSON; the hosted format and the static-hosting workflow it implied are gone. This eliminates the cross-origin CORS configuration the sandbox-by-default would otherwise require for hosted vendor files. The default vendor was already inline; behaviour there is unchanged. Custom-vendor consumers see a smaller surface area and one path to think about.
+- `<ReplPreview/>`'s pending-vendor placeholder is now rendered with `class="repl-iframe-placeholder"` instead of `class="repl-iframe repl-iframe--placeholder"`. Sharing the `repl-iframe` class with the real iframe broke Playwright's `page.frameLocator('.repl-iframe')` during the vendor-pending window — the locator latched onto the placeholder div, couldn't resolve a contentFrame, and failed permanently instead of polling.
+
+### Removed
+
+- `VendorBundle.baseUrl` and `VendorBundle.typesUrl` (both were hosted-format only). `<ReplProvider/>`'s internal `applyTypesUrl` fetcher is gone with them.
+- `repl-vendor-build` no longer accepts `--base-url` or the directory output mode (`--out <dir>` + `--bundle-out <file>`). The new shape is `repl-vendor-build <entry> --out <bundle.json> [--prod] [--no-types]` — a single JSON file with the import map and the types payload embedded.
+- `mini-react-repl/preview-html`'s `resolveImportMap` helper (no longer needed; every import-map entry is already a fully-qualified `data:` URL).
+
+### Migration
+
+- **No changes required** if you use `mini-react-repl/vendor-default`: it was already inline; the default sandbox is the only behavioural change and existing user code that doesn't reach into `window.parent` continues to work.
+- **If you used `repl-vendor-build` with hosted output**: update your build script.
+  ```diff
+  - repl-vendor-build vendor.ts --out public/vendor --bundle-out src/vendor/repl.vendor.json
+  + repl-vendor-build vendor.ts --out src/vendor/repl.vendor.json
+  ```
+  Then delete `public/vendor/` — it's no longer used. The CORS configuration on your dev / prod server for `/vendor/*` is no longer needed either (and would have been required if you'd upgraded to the new sandbox while staying on hosted).
+- **If you read `iframe.contentDocument` from outside the iframe** (custom test harnesses, external inspection): pass `<ReplPreview sandbox={null} />` to opt out of the sandbox. This makes user code same-origin with the embedder again; only do it in trusted contexts.
+- **If you locator on `.repl-iframe--placeholder`**: the placeholder class was renamed to `repl-iframe-placeholder` (the `repl-iframe` class is now exclusive to the real `<iframe>`).
+
 ## 0.14.1 — 2026-05-22
 
 ### Fixed

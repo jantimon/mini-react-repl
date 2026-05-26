@@ -26,7 +26,6 @@ import type {
   VendorBundle,
   ReplError,
   ReplLoader,
-  TypeBundle,
   VirtualModules,
 } from '../types.ts';
 
@@ -183,36 +182,6 @@ function unwrapDefault(v: VendorBundle | { default: VendorBundle }): VendorBundl
 }
 
 /**
- * If the vendor declares a hosted `typesUrl` and no inline `types`, install
- * a lazy fetcher under `types`. {@link EditorHost} invokes the function
- * once, when an editor adapter mounts — preview-only / non-Monaco consumers
- * never trigger the network round-trip. The fetch then runs in parallel to
- * swc-wasm boot, iframe mount, and Monaco initialization.
- */
-function applyTypesUrl(v: VendorBundle): VendorBundle {
-  if (v.types !== undefined || v.typesUrl === undefined) return v;
-  const url = v.typesUrl;
-  return {
-    ...v,
-    types: () =>
-      fetch(url)
-        .then((r) => {
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          return r.json() as Promise<TypeBundle>;
-        })
-        .catch((err) => {
-          // eslint-disable-next-line no-console
-          console.warn(
-            `[mini-react-repl] failed to load vendor types from '${url}': ${
-              err instanceof Error ? err.message : String(err)
-            }. Editor will boot without vendor type info.`,
-          );
-          return { libs: [] };
-        }),
-  };
-}
-
-/**
  * Wrap your editor + preview composition in this. Provides
  * {@link useRepl} and shared context to {@link ReplFileTabs},
  * {@link ReplPreview}, and any custom UIs.
@@ -229,9 +198,7 @@ function applyTypesUrl(v: VendorBundle): VendorBundle {
 export function ReplProvider(props: ReplProviderProps): React.ReactElement {
   const vendorProp = props.vendor;
   const [resolvedVendor, setResolvedVendor] = useState<VendorBundle | null>(() =>
-    isThenable<VendorBundle | { default: VendorBundle }>(vendorProp)
-      ? null
-      : applyTypesUrl(vendorProp),
+    isThenable<VendorBundle | { default: VendorBundle }>(vendorProp) ? null : vendorProp,
   );
   // Once vendor has been resolved (sync prop OR promise fulfilled), latch it.
   // Subsequent prop changes are boot-time-only and ignored, matching `entry`
@@ -256,7 +223,7 @@ export function ReplProvider(props: ReplProviderProps): React.ReactElement {
     }
     if (!isThenable<VendorBundle | { default: VendorBundle }>(vendorProp)) {
       latchedSourceRef.current = vendorProp;
-      setResolvedVendor(applyTypesUrl(vendorProp));
+      setResolvedVendor(vendorProp);
       return;
     }
     let cancelled = false;
@@ -264,7 +231,7 @@ export function ReplProvider(props: ReplProviderProps): React.ReactElement {
       (v) => {
         if (cancelled) return;
         latchedSourceRef.current = vendorProp;
-        setResolvedVendor(applyTypesUrl(unwrapDefault(v)));
+        setResolvedVendor(unwrapDefault(v));
       },
       (err) => {
         if (cancelled) return;

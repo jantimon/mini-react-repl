@@ -43,6 +43,30 @@ export type ReplPreviewProps = {
    * protocol — pick a different shape for your own messages.
    */
   iframeRef?: React.Ref<HTMLIFrameElement>;
+  /**
+   * Sandbox tokens applied to the underlying `<iframe>`. Default:
+   * `'allow-scripts allow-forms'`. User code runs cross-origin to the
+   * embedder and cannot read parent cookies, DOM, or storage. `allow-forms`
+   * is included so `<form onSubmit>` handlers fire — Chromium blocks the
+   * submit event entirely without it. `allow-same-origin`,
+   * `allow-top-navigation`, and `allow-popups` are deliberately excluded.
+   *
+   * Set to `null` to drop the sandbox attribute entirely — required for
+   * features that need same-origin DOM access (e.g. external test runners
+   * reaching into `iframe.contentDocument`). Doing so makes user code
+   * same-origin with the embedder and able to act as the embedder.
+   */
+  sandbox?: string | null;
+  /**
+   * Permissions-Policy delegated to the iframe via the `allow` attribute.
+   * Default: `''` (deny all delegated features).
+   */
+  allow?: string;
+  /**
+   * Referrer policy for outbound requests from the iframe.
+   * Default: `'no-referrer'`.
+   */
+  referrerPolicy?: React.HTMLAttributeReferrerPolicy;
   className?: string;
   style?: React.CSSProperties;
 };
@@ -211,6 +235,8 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
       const onMessage = async (event: MessageEvent) => {
         const data = event.data;
         if (!data || data.__repl !== true) return;
+        // Security invariant: only accept messages from this iframe's window.
+        // Without this check any other frame could spoof `__repl` envelopes.
         if (event.source !== iframe.contentWindow) return;
         const msg = data as FromIframe & { __repl: true };
         if (msg.kind === 'ready') {
@@ -278,9 +304,11 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
         // Vendor promise still pending. Render a same-shape placeholder so
         // layout doesn't shift when the iframe lands. `repl-preview` already
         // paints the background; this empty div fills the slot and carries
-        // an `aria-busy` hint for AT.
+        // an `aria-busy` hint for AT. Uses a distinct class from the real
+        // iframe so `page.frameLocator('.repl-iframe')` doesn't latch onto
+        // the placeholder during the vendor-pending window.
         <div
-          className="repl-iframe repl-iframe--placeholder"
+          className="repl-iframe-placeholder"
           aria-busy="true"
           style={{ width: '100%', height: '100%' }}
         />
@@ -296,6 +324,13 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
           className="repl-iframe"
           srcDoc={srcdoc}
           title="preview"
+          // `sandbox === null` is the explicit opt-out: react omits the
+          // attribute and the iframe inherits the embedder's origin.
+          sandbox={
+            props.sandbox === null ? undefined : (props.sandbox ?? 'allow-scripts allow-forms')
+          }
+          allow={props.allow ?? ''}
+          referrerPolicy={props.referrerPolicy ?? 'no-referrer'}
           // Inline so the iframe fills its container and drops the default
           // 2px inset border even when consumers don't import theme.css.
           style={{ width: '100%', height: '100%', border: 0, display: 'block' }}

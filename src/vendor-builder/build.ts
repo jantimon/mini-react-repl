@@ -5,8 +5,10 @@
  * shape via standard ESM `import * as X from '<spec>'; export { X as '<key>' }`,
  * resolves it into a manifest of `(key, specifier)` pairs, and produces one
  * ESM bundle per unique specifier plus a standard import map keyed by the
- * user-chosen names. With `types: 'embed'`, also collects the matching
- * `.d.ts` graph into `vendor.types`.
+ * user-chosen names. Each entry's URL is a `data:text/javascript;base64,...`
+ * URL so the resulting bundle works under any iframe sandbox without CORS
+ * configuration. With `types: 'embed'`, also collects the matching `.d.ts`
+ * graph into `vendor.types`.
  *
  * The required iframe-runtime core (`react`, `react-dom`, `react-dom/client`,
  * `react/jsx-runtime`, `react/jsx-dev-runtime`, `react-refresh/runtime`) is
@@ -17,24 +19,10 @@
  * Designed to run in Node, not in the browser (esbuild and the type walker
  * both require it).
  *
- * @example Hosted output, no types
+ * @example
  * ```ts
  * import { build } from 'mini-react-repl/vendor-builder'
- * const vendor = await build({
- *   entry: 'vendor.ts',
- *   format: 'hosted',
- *   outDir: 'public/vendor',
- * })
- * // vendor.importMap → { imports: { 'react': '/vendor/react.<hash>.js', ... } }
- * ```
- *
- * @example Inline output with types (works under iframe srcdoc)
- * ```ts
- * const vendor = await build({
- *   entry: 'vendor.ts',
- *   format: 'inline',
- *   types: 'embed',
- * })
+ * const vendor = await build({ entry: 'vendor.ts', types: 'embed' })
  * // vendor.importMap → { imports: { 'react': 'data:text/javascript;base64,...' } }
  * // vendor.types     → { libs: [{ path: 'file:///node_modules/react/index.d.ts', content: '...' }, ...] }
  * ```
@@ -42,9 +30,8 @@
  * @public
  */
 
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { resolve, join, dirname, relative } from 'node:path';
-import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import type { ImportMap, TypeBundle, VendorBundle } from '../types.ts';
@@ -98,16 +85,6 @@ export type BuildOptions = {
    */
   entry: string;
   /**
-   * `'hosted'` writes one file per unique specifier to `outDir` and returns
-   * an import map with relative URLs (rooted at `baseUrl`, default `/vendor`).
-   * `'inline'` returns an import map with `data:` URLs and writes nothing.
-   */
-  format: 'hosted' | 'inline';
-  /** Required when `format === 'hosted'`. */
-  outDir?: string;
-  /** Public URL base for the hosted format. @defaultValue `'/vendor'` */
-  baseUrl?: string;
-  /**
    * Whether to set `process.env.NODE_ENV` to `'development'`. React requires
    * one of `'development'` or `'production'` to be defined.
    * @defaultValue `'development'`
@@ -121,10 +98,6 @@ export type BuildOptions = {
    * that consume types — Monaco via `mini-react-repl/editor-monaco` — register
    * them with the in-browser TypeScript service.
    *
-   * The build never writes `types.json` to disk — callers receive `types`
-   * on the returned `VendorBundle` and decide where (or whether) to persist
-   * them. The CLI exposes `--types-out <path>` for this.
-   *
    * @defaultValue `'omit'`
    */
   types?: 'embed' | 'omit';
@@ -134,14 +107,9 @@ type ManifestEntry = { key: string; specifier: string };
 
 /** Build a vendor bundle. Returns the {@link VendorBundle} the consumer passes to `<Repl/>`. */
 export async function build(options: BuildOptions): Promise<VendorBundle> {
-  const baseUrl = options.baseUrl ?? '/vendor';
   const nodeEnv = options.nodeEnv ?? 'development';
   const cwd = options.cwd ?? process.cwd();
   const wantTypes = options.types === 'embed';
-
-  if (options.format === 'hosted' && !options.outDir) {
-    throw new Error("build({ format: 'hosted' }) requires outDir");
-  }
 
   const entryPath = resolve(cwd, options.entry);
   const manifest = await extractManifest(entryPath, cwd);
@@ -155,33 +123,6 @@ export async function build(options: BuildOptions): Promise<VendorBundle> {
     ? await collectTypes(uniqueSpecs, cwd)
     : undefined;
 
-  // externals for per-package bundling are the import-map KEYS (not specs).
-  // The exact-external plugin matches the bare-specifier strings appearing
-  // inside each package's source; those resolve through the iframe's import
-  // map at runtime, which is keyed by the user's chosen names.
-  const allKeys = manifest.map((m) => m.key);
-
-  if (options.format === 'hosted') {
-    const outDir = resolve(cwd, options.outDir!);
-    await mkdir(outDir, { recursive: true });
-
-    const specToUrl = new Map<string, string>();
-    for (const spec of uniqueSpecs) {
-      const externals = externalsFor(spec, manifest);
-      const code = await bundlePackage(spec, externals, nodeEnv, cwd);
-      const safe = spec.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '');
-      const hash = shortHash(code);
-      const filename = `${safe}.${hash}.js`;
-      await writeFile(join(outDir, filename), code, 'utf8');
-      specToUrl.set(spec, `${baseUrl.replace(/\/+$/, '')}/${filename}`);
-    }
-    for (const m of manifest) {
-      importMap.imports[m.key] = specToUrl.get(m.specifier)!;
-    }
-    return types ? { importMap, types } : { importMap };
-  }
-
-  // inline
   const specToUrl = new Map<string, string>();
   for (const spec of uniqueSpecs) {
     const externals = externalsFor(spec, manifest);
@@ -558,10 +499,6 @@ function toDataUrl(code: string): string {
   // eslint-disable-next-line @typescript-eslint/no-deprecated
   const base64 = Buffer.from(code, 'utf8').toString('base64');
   return `data:text/javascript;base64,${base64}`;
-}
-
-function shortHash(s: string): string {
-  return createHash('sha256').update(s).digest('hex').slice(0, 8);
 }
 
 // ─── type-bundle collection ──────────────────────────────────────────────

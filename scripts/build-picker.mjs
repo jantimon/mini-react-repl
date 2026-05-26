@@ -2,7 +2,10 @@
 /**
  * Bundles `src/inspect/picker/picker.ts` (the iframe-side inspect picker)
  * into a single self-contained ESM string and emits it as a TypeScript
- * module so `preview-html.ts` can inline it as a third `<script type="module">`.
+ * module. `<InspectMode/>` posts this source to the iframe runtime, which
+ * builds a `blob:` URL and `import()`s it on first activation — so the
+ * picker rides the same cross-origin postMessage + blob-URL channel that
+ * user modules already use, no `iframe.contentDocument` injection required.
  *
  * `@jridgewell/trace-mapping` is bundled in. Nothing the picker imports is
  * external — the whole bundle has to run in a fresh iframe with only the
@@ -20,11 +23,10 @@ const root = resolve(__dirname, '..');
 const result = await build({
   entryPoints: [resolve(root, 'src/inspect/picker/picker.ts')],
   bundle: true,
-  // IIFE so the bundle runs as a classic `<script>` (no `type="module"`).
-  // Classic scripts with inline content execute synchronously on append,
-  // which lets `<InspectMode>` lazy-inject the picker and immediately post
-  // `inspect:enable` without any ready-handshake roundtrip.
-  format: 'iife',
+  // ESM so the iframe runtime can `import(blobUrl)` the bundle. Top-level
+  // statements (the picker's `window.addEventListener('message', ...)`
+  // registrations) run on first import, exactly once per iframe lifetime.
+  format: 'esm',
   target: 'es2022',
   platform: 'browser',
   write: false,

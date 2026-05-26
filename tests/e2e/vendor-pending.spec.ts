@@ -28,9 +28,10 @@ test.describe('vendor pending state', () => {
   test('placeholder shows while promise pending; iframe mounts on resolve', async ({ page }) => {
     await gotoPending(page);
 
-    // Placeholder div renders immediately (same class hook as the iframe so
-    // consumer styles inherit, plus a `--placeholder` modifier).
-    const placeholder = page.locator('div.repl-iframe--placeholder');
+    // Placeholder div renders immediately while vendor resolves. Uses a
+    // distinct class from the real iframe so frameLocator selectors only
+    // match the real iframe once it mounts.
+    const placeholder = page.locator('div.repl-iframe-placeholder');
     await expect(placeholder).toBeVisible();
     await expect(placeholder).toHaveAttribute('aria-busy', 'true');
 
@@ -63,7 +64,7 @@ test.describe('vendor pending state', () => {
 
     await gotoPending(page);
 
-    const placeholder = page.locator('div.repl-iframe--placeholder');
+    const placeholder = page.locator('div.repl-iframe-placeholder');
     await expect(placeholder).toBeVisible();
 
     await page.evaluate(() => window.__rejectVendor!('boom'));

@@ -70,18 +70,19 @@ export function InspectMode(props: InspectModeProps): React.ReactElement | null 
   useEffect(() => iframeRegistry.subscribe(setIframe), [iframeRegistry]);
 
   // Toggle the picker by posting to the iframe whenever `active` flips.
-  // First activation also lazily injects the picker bundle into the iframe;
-  // subsequent toggles are pure postMessage. The disable on cleanup also
-  // fires on unmount and when the iframe element identity changes
-  // (post-reloadPreview), so the picker never lingers.
+  // First activation also installs the picker bundle via the runtime's
+  // `inspect:install` channel (postMessage + blob-URL import); subsequent
+  // toggles are pure `inspect:enable` / `inspect:disable` posts. The
+  // disable on cleanup also fires on unmount and when the iframe element
+  // identity changes (post-reloadPreview), so the picker never lingers.
   useEffect(() => {
     if (!active || !iframe) return undefined;
+    let cancelled = false;
 
-    const enable = () => {
-      const target = iframe.contentWindow;
-      if (!target) return false;
-      if (!ensurePickerInstalled(iframe)) return false;
-      target.postMessage(
+    void (async () => {
+      const ok = await ensurePickerInstalled(iframe);
+      if (cancelled || !ok) return;
+      iframe.contentWindow?.postMessage(
         {
           __repl: true,
           kind: 'inspect:enable',
@@ -89,22 +90,10 @@ export function InspectMode(props: InspectModeProps): React.ReactElement | null 
         },
         '*',
       );
-      return true;
-    };
-
-    let onLoad: (() => void) | undefined;
-    if (!enable()) {
-      // Iframe document not ready yet — wait for its `load` event and try
-      // again. Common case is the user pressing Inspect immediately after
-      // mount; very fast iframes have already loaded by then.
-      onLoad = () => {
-        enable();
-      };
-      iframe.addEventListener('load', onLoad, { once: true });
-    }
+    })();
 
     return () => {
-      if (onLoad) iframe.removeEventListener('load', onLoad);
+      cancelled = true;
       iframe.contentWindow?.postMessage({ __repl: true, kind: 'inspect:disable' }, '*');
     };
   }, [active, iframe, overlayClassName]);
