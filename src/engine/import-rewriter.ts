@@ -110,11 +110,19 @@ export function rewriteImports(
     if (name.startsWith('./') || name.startsWith('/')) {
       const target = resolveRelative(name, files);
       if (target === null) throw new ResolveError(fromPath, name);
-      // Emit a normalized specifier: '/<target-path>' (always with leading
-      // slash, full extension included). Stable, unique, easy to find.
-      const normalized = `./${target}`;
-      deps.push({ specifier: normalized, target });
-      out += isDynamic ? `'${normalized}'` : normalized;
+      if (target.endsWith('.css')) {
+        // CSS is injected as a <style> tag by the engine; the JS-level
+        // `import './foo.css'` is side-effect-only. Substitute an empty
+        // data: URL — a real relative specifier can't resolve against the
+        // module's blob: URL (blob URLs are non-hierarchical).
+        out += isDynamic ? `'data:text/javascript,'` : `data:text/javascript,`;
+      } else {
+        // Emit a normalized specifier: '/<target-path>' (always with leading
+        // slash, full extension included). Stable, unique, easy to find.
+        const normalized = `./${target}`;
+        deps.push({ specifier: normalized, target });
+        out += isDynamic ? `'${normalized}'` : normalized;
+      }
     } else if (virtualAliases?.has(name)) {
       deps.push({ specifier: name, target: VIRTUAL_KEY_PREFIX + name });
       out += isDynamic ? `'${name}'` : name;

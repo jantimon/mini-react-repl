@@ -67,4 +67,25 @@ describe('import-rewriter', () => {
     expect(r.bareSpecifiers).toEqual([]);
     expect(r.code).toContain(`'@foo/bar'`);
   });
+
+  it('rewrites a relative CSS import to an empty data: URL and skips the dep', () => {
+    // A real relative specifier can't resolve against the module's blob: URL,
+    // so the import must be substituted for a no-op JS module. The engine
+    // injects the CSS via <style> tag separately.
+    const code = `import './App.css'\nexport default 1\n`;
+    const files = { 'App.tsx': '', 'App.css': 'h1 { color: red }' };
+    const r = rewriteImports('App.tsx', code, files);
+    expect(r.code).toContain(`'data:text/javascript,'`);
+    expect(r.code).not.toContain(`'./App.css'`);
+    expect(r.deps).toEqual([]);
+  });
+
+  it('rewrites a dynamic CSS import to a quoted empty data: URL', () => {
+    const code = `await import('./theme.css')\n`;
+    const files = { 'App.tsx': '', 'theme.css': '' };
+    const r = rewriteImports('App.tsx', code, files);
+    expect(r.code).toContain(`'data:text/javascript,'`);
+    expect(r.code).not.toContain(`'./theme.css'`);
+    expect(r.deps).toEqual([]);
+  });
 });

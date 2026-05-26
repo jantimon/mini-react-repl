@@ -2,6 +2,12 @@
 
 All notable changes to `mini-react-repl`. Dates are YYYY-MM-DD.
 
+## 0.14.1 — 2026-05-22
+
+### Fixed
+
+- `import './foo.css'` from a JS/TSX file no longer crashes the iframe with `Failed to resolve module specifier "./foo.css". Invalid relative url or base scheme isn't hierarchical.` The import-rewriter now substitutes the specifier with an empty `data:text/javascript,` module when the resolved target is a `.css` file — relative specifiers can't resolve against the module's `blob:` URL (blob URLs are non-hierarchical), so a real specifier would never load. CSS is still injected as a `<style>` tag by the engine; the JS-level import is side-effect-only and now becomes a cheap no-op import. Dynamic `await import('./theme.css')` resolves to an empty module instead of throwing.
+
 ## 0.14.0 — 2026-05-20
 
 ### Changed
