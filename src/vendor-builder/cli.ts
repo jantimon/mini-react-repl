@@ -14,9 +14,6 @@
  *   import { customVendor } from './sandbox/vendor.generated';
  *   <ReplProvider vendor={customVendor}>…</ReplProvider>
  *
- * For programmatic control, use the API:
- *   import { build } from 'mini-react-repl/vendor-builder';
- *
  * @internal
  */
 
@@ -26,11 +23,17 @@ import { realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-type Args = {
+export type RunBuildOptions = {
   entry: string;
   outDir: string;
   nodeEnv: 'development' | 'production';
   types: boolean;
+  /**
+   * Name of the `VendorBundle` constant the generated `index.ts` exports.
+   * The library's in-repo build sets this to `defaultVendor`; the CLI's
+   * default for end users is `customVendor`.
+   */
+  exportName: string;
 };
 
 /**
@@ -57,8 +60,12 @@ export function deriveOutDir(entry: string): string {
   return join(dirname(entry), `${stripped}.generated`);
 }
 
-function parseArgs(argv: string[]): Args {
-  const args: Partial<Args> = { nodeEnv: 'development', types: true };
+function parseArgs(argv: string[]): RunBuildOptions {
+  const args: Partial<RunBuildOptions> = {
+    nodeEnv: 'development',
+    types: true,
+    exportName: 'customVendor',
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === '--out' || a === '-o') {
@@ -67,6 +74,8 @@ function parseArgs(argv: string[]): Args {
       args.nodeEnv = 'production';
     } else if (a === '--no-types') {
       args.types = false;
+    } else if (a === '--export-name') {
+      args.exportName = argv[++i];
     } else if (a === '--help' || a === '-h') {
       printHelp();
       process.exit(0);
@@ -87,7 +96,12 @@ function parseArgs(argv: string[]): Args {
   if (!args.outDir) {
     args.outDir = deriveOutDir(args.entry);
   }
-  return args as Args;
+  if (args.exportName && !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(args.exportName)) {
+    throw new Error(
+      `--export-name must be a valid JavaScript identifier; got "${args.exportName}".`,
+    );
+  }
+  return args as RunBuildOptions;
 }
 
 function printHelp(): void {
@@ -106,13 +120,15 @@ Optional:
                            named <entry-stem>.generated — the \`.entry.\` infix
                            is stripped if present, so \`vendor.entry.ts\` and
                            \`vendor.ts\` both produce \`vendor.generated/\`)
+      --export-name <name> identifier the generated index.ts exports
+                           (default: customVendor)
       --no-types           skip the .d.ts walk (smaller output, no editor type info)
       --prod               use NODE_ENV=production (default development)
   -h, --help               show this help
 
 Output folder layout:
   <out>/
-    index.ts          ← exports \`customVendor: VendorBundle\`, with lazy
+    index.ts          ← exports \`<export-name>: VendorBundle\`, with lazy
                         importMap + lazy types (both via dynamic import)
     import-map.json   ← { imports: { 'react': 'data:...', ... } }
     types.json        ← { libs: [...] }     (absent with --no-types)
@@ -156,7 +172,7 @@ Example invocation:
  * An SSR window-guard short-circuits the thunks to empty payloads on the
  * server so the JSON chunks aren't pulled into the SSR bundle.
  */
-export function renderIndexTs(opts: { hasTypes: boolean }): string {
+export function renderIndexTs(opts: { hasTypes: boolean; exportName: string }): string {
   const typesProp = opts.hasTypes
     ? `
   types: () =>
@@ -176,8 +192,8 @@ export function renderIndexTs(opts: { hasTypes: boolean }): string {
 //
 // Drop into <ReplProvider>:
 //
-//   import { customVendor } from './vendor.generated';
-//   <ReplProvider vendor={customVendor}>…</ReplProvider>
+//   import { ${opts.exportName} } from './vendor.generated';
+//   <ReplProvider vendor={${opts.exportName}}>…</ReplProvider>
 //
 // Loading sequence
 // ================
@@ -214,7 +230,7 @@ export function renderIndexTs(opts: { hasTypes: boolean }): string {
 import type { ${typeImports} } from 'mini-react-repl';
 
 const EMPTY_IMPORT_MAP: ImportMap = { imports: {} };${emptyTypeConst}
-export const customVendor: VendorBundle = {
+export const ${opts.exportName}: VendorBundle = {
   importMap: () =>
     typeof window === 'undefined'
       ? Promise.resolve(EMPTY_IMPORT_MAP)
@@ -244,16 +260,19 @@ async function ensureEsbuildInstalled(): Promise<void> {
   }
 }
 
-async function main(): Promise<void> {
-  await ensureEsbuildInstalled();
-  const args = parseArgs(process.argv.slice(2));
+/**
+ * Run the full build → write-to-disk flow. The CLI's `main()` calls this
+ * after parsing argv; `scripts/build-default-vendor.mjs` calls it directly
+ * so the library's own default vendor goes through the same path users do.
+ */
+export async function runBuild(opts: RunBuildOptions): Promise<void> {
   const bundle = await build({
-    entry: args.entry,
-    nodeEnv: args.nodeEnv,
-    types: args.types ? 'embed' : 'omit',
+    entry: opts.entry,
+    nodeEnv: opts.nodeEnv,
+    types: opts.types ? 'embed' : 'omit',
   });
 
-  const outDir = resolve(process.cwd(), args.outDir);
+  const outDir = resolve(process.cwd(), opts.outDir);
   await mkdir(outDir, { recursive: true });
 
   const importMapPath = join(outDir, 'import-map.json');
@@ -266,10 +285,16 @@ async function main(): Promise<void> {
   }
 
   const indexPath = join(outDir, 'index.ts');
-  await writeFile(indexPath, renderIndexTs({ hasTypes }), 'utf8');
+  await writeFile(indexPath, renderIndexTs({ hasTypes, exportName: opts.exportName }), 'utf8');
 
   const files = hasTypes ? 'index.ts, import-map.json, types.json' : 'index.ts, import-map.json';
   process.stderr.write(`✓ wrote ${outDir}/ (${files})\n`);
+}
+
+async function main(): Promise<void> {
+  await ensureEsbuildInstalled();
+  const args = parseArgs(process.argv.slice(2));
+  await runBuild(args);
 }
 
 // Only run main() when invoked as a script — not when imported by tests.

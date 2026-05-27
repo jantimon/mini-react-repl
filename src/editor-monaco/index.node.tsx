@@ -28,13 +28,14 @@ export type { MonacoReplEditorProps };
 const NOOP_ON_CHANGE = () => {};
 
 export function MonacoReplEditor(props: MonacoReplEditorProps): React.ReactElement {
+  const autoTheme = props.theme === undefined || props.theme === 'auto';
   return (
     <>
       <div
         className={`repl-editor-monaco ${props.className ?? ''}`}
         style={{ width: '100%', height: '100%', ...props.style }}
       />
-      {props.theme === undefined && <ColorSchemeWatcher onChange={NOOP_ON_CHANGE} />}
+      {autoTheme && <ColorSchemeWatcher onChange={NOOP_ON_CHANGE} />}
     </>
   );
 }

@@ -1,26 +1,32 @@
 /**
  * Main-thread orchestration of the transform worker.
  *
- * Owns:
- *   - the worker lifecycle (lazy init, ready promise)
- *   - the per-path debounce
- *   - the in-flight request tracker
+ * Split in two:
  *
- * Does NOT own:
- *   - blob URLs (the iframe creates and revokes them inside its own context;
- *     parent-created blob URLs don't load reliably under srcdoc)
- *   - the file table (consumer's `files` prop is the source of truth)
- *   - the iframe (handled by `<ReplPreview/>`)
+ *   - {@link TransformClient} owns the worker lifecycle (lazy init, ready
+ *     promise) and virtual-module config. It can be prewarmed before any
+ *     iframe exists; it has no per-iframe state.
+ *   - {@link TransformSession} owns the files snapshot, the debounce timers,
+ *     and the output sink for one iframe's lifetime. `attachSession` returns
+ *     a non-null `TransformSession`, so every emission point has a real sink
+ *     — no defensive null-checks, no silently swallowed errors.
+ *
+ * Blob URLs are not owned here. The iframe creates and revokes them inside
+ * its own context — parent-created blob URLs don't load reliably under
+ * srcdoc.
  *
  * @internal
  */
 
 import { initLexer, rewriteImports, ResolveError, VIRTUAL_KEY_PREFIX } from './import-rewriter.ts';
 import { defaultLoader } from './default-loader.ts';
+import { resolveRelative } from './path-utils.ts';
+import type { WorkerMessage } from './worker.ts';
 import type { ModulePayload } from '../runtime/protocol.ts';
-import type { ReplLoader, ReplTransform } from '../types.ts';
+import type { Files, ReplLoader, ReplTransform } from '../types.ts';
 
 const DEFAULT_SWC_WASM_URL = 'https://cdn.jsdelivr.net/npm/@swc/wasm-web@1.15.30/wasm_bg.wasm';
+const DEFAULT_DEBOUNCE_MS = 150;
 
 export type { ModulePayload };
 
@@ -36,14 +42,12 @@ export type TransformError = {
 export type TransformClientOptions = {
   /** URL of swc-wasm. Pass a self-hosted path for offline / strict CSP. */
   swcWasmUrl?: string;
-  /** Idle ms before transforming after the latest `setFile` call. */
+  /** Idle ms before transforming after the latest edit. */
   debounceMs?: number;
   /**
-   * Per-file pre-processor. Defaults to {@link defaultLoader} (which
-   * implements `.css` → `<style>`, `.tsx`/`.ts`/`.jsx`/`.js` → swc,
-   * everything else → ignored).
-   *
-   * A custom loader fully replaces the default; delegate to `defaultLoader`
+   * Per-file pre-processor. Defaults to {@link defaultLoader} (`.css` →
+   * `<style>`, `.tsx`/`.ts`/`.jsx`/`.js` → swc, everything else → ignored).
+   * A custom loader fully replaces the default — delegate to `defaultLoader`
    * for files you don't want to handle.
    */
   loader?: ReplLoader;
@@ -53,18 +57,22 @@ export type TransformClientOptions = {
    * (`VIRTUAL_KEY_PREFIX + alias`). User code that imports the alias gets
    * the literal specifier substituted for the virtual's blob URL by the
    * iframe runtime — same mechanism as relative imports.
-   *
-   * Snapshotted at construction time. Incremental edits (`syncFiles`) never
-   * touch virtuals.
    */
   virtualModules?: Record<string, string>;
+  /**
+   * Hook for errors raised before a session is attached (worker init /
+   * prewarm). Defaults to throwing — pass an explicit handler if you want
+   * fire-and-forget prewarming (e.g. `() => {}` to drop, or a logger).
+   * Session-time errors are routed through {@link SessionHandlers.onError}.
+   */
+  onWorkerError?: (err: Error) => void;
 };
 
 /**
  * Per-iframe output sink. Attached via {@link TransformClient.attachSession}
  * for the lifetime of a single iframe boot; detached when the iframe
  * unmounts. The client itself outlives any individual session — the worker
- * + wasm + virtual-module compilation are reusable across attaches.
+ * + wasm are reusable across attaches.
  */
 export type SessionHandlers = {
   /** Called when a module is ready for the iframe. */
@@ -77,7 +85,7 @@ export type SessionHandlers = {
   onError: (err: TransformError) => void;
 };
 
-/** A resettable, debounced transform driver. */
+/** Owns the worker; emits to whatever session is currently attached. */
 export class TransformClient {
   private worker: Worker | null = null;
   private workerReady: Promise<void> | null = null;
@@ -86,337 +94,91 @@ export class TransformClient {
     number,
     { path: string; resolve: (code: string) => void; reject: (err: unknown) => void }
   >();
-  private timers = new Map<string, ReturnType<typeof setTimeout>>();
-  private latestSource = new Map<string, string>();
-  private files: Record<string, string> = {};
   private disposed = false;
-  /**
-   * Paths currently injected as CSS in the iframe. We track this so removals
-   * can pick the right teardown branch — built-in `.css` files and loader-
-   * produced CSS look the same from `handleRemoval`'s perspective.
-   */
-  private cssPaths = new Set<string>();
-  /**
-   * Virtual modules: alias → source. Snapshotted at construction. The alias
-   * set is the rewriter's signal that a bare specifier should be treated as
-   * a dep (substitution path) rather than passed through to the import map.
-   */
-  private readonly virtualSources: Record<string, string>;
-  private readonly virtualAliases: ReadonlySet<string>;
-  /**
-   * The currently attached iframe's output sink. `null` whenever the
-   * client is idle between iframe attaches (or before the first one).
-   * `prewarm()` and the worker init handshake do not require a session;
-   * `transformAll` / `processOne` are only called from inside an attached
-   * session, so a `null` slot during a transform is a wiring bug — we
-   * route emissions through `this.session?.onX(...)` defensively.
-   */
-  private session: SessionHandlers | null = null;
+  private currentSession: TransformSession | null = null;
+  /** Virtual modules: alias → source. Snapshotted at construction. */
+  readonly virtualSources: Record<string, string>;
+  readonly virtualAliases: ReadonlySet<string>;
 
-  constructor(private readonly opts: TransformClientOptions) {
+  constructor(readonly opts: TransformClientOptions) {
     this.virtualSources = opts.virtualModules ?? {};
     this.virtualAliases = new Set(Object.keys(this.virtualSources));
   }
 
   /**
-   * Attach an iframe's output sink for the duration of one iframe boot.
-   * Returns a `{ detach }` handle the caller invokes on iframe teardown.
+   * Eagerly download swc-wasm + worker JS. Lets callers overlap the worker
+   * boot with other work — `<ReplPreview/>` calls it as soon as the iframe
+   * mounts so wasm downloads in parallel with vendor / runtime fetching.
    *
-   * Replaces any existing session (matches the previous setupIframe-owned
-   * client model). Detach is a no-op if a newer session has already
-   * attached, so callers can call it unconditionally from cleanup.
-   */
-  attachSession(handlers: SessionHandlers): { detach: () => void } {
-    this.session = handlers;
-    return {
-      detach: () => {
-        if (this.session === handlers) this.session = null;
-      },
-    };
-  }
-
-  /**
-   * Replace the files snapshot without scheduling any transforms.
-   * Used for cold boot where {@link transformAll} drives the work.
-   */
-  setFiles(next: Record<string, string>): void {
-    if (this.disposed) return;
-    this.files = next;
-  }
-
-  /**
-   * Synchronize with a new files snapshot.
+   * Errors route to {@link TransformClientOptions.onWorkerError} when set,
+   * or reject the returned promise when not. **Do not fire-and-forget
+   * without one of these — an unhandled rejection will surface in dev and
+   * be silently lost in production.**
    *
-   * Diffs against the previous snapshot:
-   *   - new file or changed source → schedule debounced transform
-   *   - removed file → emit removal (CSS) or drop pending (JS)
+   * @example With onWorkerError (recommended for fire-and-forget):
+   * ```ts
+   * const client = new TransformClient({
+   *   onWorkerError: (err) => reportToSentry(err),
+   * });
+   * void client.prewarm(); // safe — errors flow through onWorkerError
+   * ```
    *
-   * CSS files bypass the worker and go straight to the iframe via
-   * `onCssUpsert` / `onCssRemove`.
+   * @example Without onWorkerError:
+   * ```ts
+   * await client.prewarm().catch((err) => reportToSentry(err));
+   * ```
    */
-  syncFiles(next: Record<string, string>): void {
-    if (this.disposed) return;
-    const prev = this.files;
-    this.files = next;
-
-    let moduleRemoved = false;
-    for (const path of Object.keys(prev)) {
-      if (!(path in next)) {
-        // Anything that wasn't injected as CSS could have been a module;
-        // assume dependents need re-resolution.
-        if (!this.cssPaths.has(path)) moduleRemoved = true;
-        this.handleRemoval(path);
-      }
-    }
-
-    // Every file flows through the loader (default or custom) — the loader
-    // decides what to actually do (compile, inject as CSS, or skip).
-    for (const path of Object.keys(next)) {
-      const newSource = next[path]!;
-      if (prev[path] === newSource) continue;
-      this.scheduleTransform(path, newSource);
-    }
-
-    // When a module is removed, dependents may have stale imports pointing
-    // at it. Re-transform every other file so rewriteImports sees the new
-    // state and surfaces ResolveError for any reference to the removed path.
-    if (moduleRemoved) {
-      for (const path of Object.keys(next)) {
-        this.scheduleTransform(path, next[path]!);
-      }
-    }
-  }
-
-  /**
-   * Transform every code file from scratch.
-   *
-   * Files are emitted in dependency order (topological sort) so the iframe
-   * can build blob URLs with already-resolved deps for each module.
-   */
-  async transformAll(): Promise<void> {
-    if (this.disposed) return;
-    await this.ensureWorker();
-    await initLexer();
-    const loader = this.opts.loader ?? defaultLoader;
-
-    // 1a. compile virtual modules. They bypass the user-supplied loader
-    //     (always TSX, always swc) and live under synthetic keys so they
-    //     never collide with user files.
-    const mods: { path: string; code: string }[] = [];
-    await Promise.all(
-      Object.entries(this.virtualSources).map(async ([alias, source]) => {
-        const virtualKey = VIRTUAL_KEY_PREFIX + alias;
-        try {
-          const code = await this.runTransform(virtualKey, source, true);
-          mods.push({ path: virtualKey, code });
-        } catch (err) {
-          this.reportError(err, virtualKey);
-        }
-      }),
-    );
-
-    // 1b. run the loader on every user file in parallel. CSS is upserted
-    //     right away; modules collect for the dep-graph + topo-emit pass.
-    await Promise.all(
-      Object.entries(this.files).map(async ([path, source]) => {
-        try {
-          const result = await loader({ path, source, transform: this.boundTransform(path) });
-          if (!result) return;
-          if (result.kind === 'css') {
-            this.upsertCss(path, result.source);
-            return;
-          }
-          mods.push({ path, code: result.code });
-        } catch (err) {
-          this.reportError(err, path);
-        }
-      }),
-    );
-    const byPath = new Map(mods.map((m) => [m.path, m]));
-
-    // 2. discover dep graph from each module body. Bare specifiers that
-    //    match a virtual alias produce a topo edge so virtuals are emitted
-    //    before any consumer — without this, `buildBlobUrl()` in the iframe
-    //    runtime can't substitute the alias for the virtual's blob URL.
-    const lexer = await import('es-module-lexer');
-    const depGraph = new Map<string, string[]>();
-    for (const m of mods) {
-      try {
-        const [specs] = lexer.parse(m.code);
-        const deps: string[] = [];
-        for (const s of specs) {
-          const raw = s.n ?? (s.s >= 0 ? m.code.slice(s.s, s.e) : '');
-          const name = raw.replace(/^['"]|['"]$/g, '');
-          if (name.startsWith('./') || name.startsWith('/')) {
-            const tgt = resolveLogical(name, this.files);
-            if (tgt) deps.push(tgt);
-          } else if (this.virtualAliases.has(name)) {
-            deps.push(VIRTUAL_KEY_PREFIX + name);
-          }
-        }
-        depGraph.set(m.path, deps);
-      } catch {
-        depGraph.set(m.path, []);
-      }
-    }
-
-    // 3. topological sort.
-    const order = topoSort(depGraph);
-
-    // 4. emit in topo order.
-    for (const path of order) {
-      const m = byPath.get(path);
-      if (!m) continue;
-      try {
-        const rewritten = rewriteImports(path, m.code, this.files, this.virtualAliases);
-        this.session?.onModule({
-          path,
-          code: rewritten.code,
-          deps: rewritten.deps,
-        });
-      } catch (err) {
-        this.reportError(err, path);
-      }
-    }
-  }
-
-  private scheduleTransform(path: string, source: string): void {
-    this.latestSource.set(path, source);
-    const existing = this.timers.get(path);
-    if (existing) clearTimeout(existing);
-    const debounce = this.opts.debounceMs ?? 150;
-    const timer = setTimeout(() => {
-      this.timers.delete(path);
-      void this.processOne(path);
-    }, debounce);
-    this.timers.set(path, timer);
-  }
-
-  private async processOne(path: string): Promise<void> {
-    if (this.disposed) return;
-    const source = this.latestSource.get(path);
-    if (source === undefined) return;
-    try {
-      await this.ensureWorker();
-      const loader = this.opts.loader ?? defaultLoader;
-      const result = await loader({ path, source, transform: this.boundTransform(path) });
-      if (!result) return;
-      if (result.kind === 'css') {
-        this.upsertCss(path, result.source);
+  prewarm(): Promise<void> {
+    return this.ensureWorker().catch((err) => {
+      const e = err instanceof Error ? err : new Error(String(err));
+      if (this.opts.onWorkerError) {
+        this.opts.onWorkerError(e);
         return;
       }
-      await initLexer();
-      const rewritten = rewriteImports(path, result.code, this.files, this.virtualAliases);
-      this.session?.onModule({
-        path,
-        code: rewritten.code,
-        deps: rewritten.deps,
-      });
-    } catch (err) {
-      this.reportError(err, path);
-    }
-  }
-
-  /** A {@link ReplTransform} bound to one file's path (for source map filename). */
-  private boundTransform(path: string): ReplTransform {
-    return (src, opts) => this.runTransform(path, src, opts?.tsx);
-  }
-
-  private upsertCss(path: string, css: string): void {
-    this.cssPaths.add(path);
-    this.session?.onCssUpsert(path, css);
-  }
-
-  private removeCss(path: string): void {
-    this.cssPaths.delete(path);
-    this.session?.onCssRemove(path);
-  }
-
-  private reportError(err: unknown, path: string): void {
-    const sink = this.session;
-    if (!sink) return;
-    if (err instanceof ResolveError) {
-      sink.onError({
-        kind: 'resolve',
-        path: err.path,
-        message: err.message,
-        specifier: err.specifier,
-      });
-      return;
-    }
-    if (isTransformError(err)) {
-      sink.onError({
-        kind: 'transform',
-        path: err.path,
-        message: err.message,
-        ...(err.loc ? { loc: err.loc } : {}),
-      });
-      return;
-    }
-    sink.onError({
-      kind: 'transform',
-      path,
-      message: err instanceof Error ? err.message : String(err),
+      throw e;
     });
-  }
-
-  private handleRemoval(path: string): void {
-    if (this.cssPaths.has(path)) {
-      this.removeCss(path);
-      return;
-    }
-    this.latestSource.delete(path);
-    const t = this.timers.get(path);
-    if (t) {
-      clearTimeout(t);
-      this.timers.delete(path);
-    }
-  }
-
-  private async ensureWorker(): Promise<void> {
-    if (this.workerReady) return this.workerReady;
-    this.workerReady = new Promise<void>((resolve, reject) => {
-      const worker = new Worker(this.workerUrl(), { type: 'module' });
-      const wasmUrl = this.opts.swcWasmUrl ?? DEFAULT_SWC_WASM_URL;
-      this.worker = worker;
-
-      let initSent = false;
-      worker.onmessage = (event: MessageEvent) => {
-        const msg = event.data;
-        if (msg.kind === 'worker-loaded') {
-          if (!initSent) {
-            initSent = true;
-            const id = ++this.requestId;
-            worker.postMessage({ kind: 'init', id, wasmUrl });
-          }
-          return;
-        }
-        if (msg.kind === 'init-ok') return resolve();
-        if (msg.kind === 'init-err')
-          return reject(new Error(`swc-wasm init failed: ${msg.message}`));
-        if (msg.kind === 'transform-ok' || msg.kind === 'transform-err') {
-          this.handleTransformResponse(msg);
-        }
-      };
-      worker.onerror = (err) => {
-        reject(new Error(`worker error: ${err.message ?? 'unknown'}`));
-      };
-    });
-    return this.workerReady;
   }
 
   /**
-   * Resolve the URL of the bundled worker. After tsup, this lives at
-   * `dist/worker.js` next to `dist/index.js`. Modern bundlers (Vite,
-   * Rollup 4+, Webpack 5+, esbuild, Parcel 2+) recognize this exact
-   * `new Worker(new URL('./worker.js', import.meta.url))` pattern and
-   * emit / fingerprint the worker correctly.
+   * Attach a session for one iframe lifetime. Returns a non-null
+   * {@link TransformSession} the caller drives with `setFiles()` and tears
+   * down with `detach()`. Detach is keyed to the returned instance, so it's
+   * safe to call from cleanup even if a newer session has already attached.
+   *
+   * If a previous session is still attached, it is detached first. This
+   * preserves the invariant that at most one session is live and prevents
+   * orphaned timers from continuing to fire emissions to a dangling sink.
    */
-  private workerUrl(): URL {
-    return new URL('./worker.js', import.meta.url);
+  attachSession(handlers: SessionHandlers): TransformSession {
+    this.currentSession?.detach();
+    const session = new TransformSession(this, handlers);
+    this.currentSession = session;
+    return session;
   }
 
-  private runTransform(path: string, source: string, tsx?: boolean): Promise<string> {
+  /** Stop processing and terminate the worker. */
+  dispose(): void {
+    this.disposed = true;
+    this.currentSession?.detach();
+    this.worker?.terminate();
+    this.worker = null;
+    this.workerReady = null;
+  }
+
+  // --- internals shared with TransformSession ---
+
+  /** @internal */
+  isDisposed(): boolean {
+    return this.disposed;
+  }
+
+  /** @internal */
+  releaseSession(session: TransformSession): void {
+    if (this.currentSession === session) this.currentSession = null;
+  }
+
+  /** @internal */
+  runTransform(path: string, source: string, tsx?: boolean): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       if (!this.worker) {
         reject(new Error('worker not started'));
@@ -434,16 +196,46 @@ export class TransformClient {
     });
   }
 
+  /** @internal */
+  ensureWorker(): Promise<void> {
+    if (this.workerReady) return this.workerReady;
+    this.workerReady = new Promise<void>((resolve, reject) => {
+      const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+      const wasmUrl = this.opts.swcWasmUrl ?? DEFAULT_SWC_WASM_URL;
+      this.worker = worker;
+
+      let initSent = false;
+      worker.onmessage = (event: MessageEvent<WorkerMessage>) => {
+        const msg = event.data;
+        switch (msg.kind) {
+          case 'worker-loaded':
+            if (!initSent) {
+              initSent = true;
+              const id = ++this.requestId;
+              worker.postMessage({ kind: 'init', id, wasmUrl });
+            }
+            return;
+          case 'init-ok':
+            return resolve();
+          case 'init-err':
+            return reject(new Error(`swc-wasm init failed: ${msg.message}`));
+          case 'transform-ok':
+          case 'transform-err':
+            this.handleTransformResponse(msg);
+            return;
+          default:
+            ((kind: never) => kind)(msg);
+        }
+      };
+      worker.onerror = (err) => {
+        reject(new Error(`worker error: ${err.message ?? 'unknown'}`));
+      };
+    });
+    return this.workerReady;
+  }
+
   private handleTransformResponse(
-    msg:
-      | { kind: 'transform-ok'; id: number; path: string; code: string }
-      | {
-          kind: 'transform-err';
-          id: number;
-          path: string;
-          message: string;
-          loc?: { line: number; column: number };
-        },
+    msg: Extract<WorkerMessage, { kind: 'transform-ok' | 'transform-err' }>,
   ): void {
     const pending = this.pending.get(msg.id);
     if (!pending) return;
@@ -461,62 +253,313 @@ export class TransformClient {
       pending.reject(err);
     }
   }
+}
+
+/** Per-iframe driver. Detach-then-throw is the contract: detach() makes all subsequent calls no-ops. */
+export class TransformSession {
+  private files: Files = {};
+  private timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private latestSource = new Map<string, string>();
+  /** Paths currently injected as CSS so removals can pick the right teardown. */
+  private cssPaths = new Set<string>();
+  private detached = false;
+  private bootStarted = false;
+
+  constructor(
+    private readonly client: TransformClient,
+    private readonly handlers: SessionHandlers,
+  ) {}
 
   /**
-   * Eagerly construct + initialize the worker (downloads the worker JS
-   * chunk and swc-wasm bytes, runs the init handshake). Safe to call
-   * before any transforms. Lets callers overlap the worker boot with
-   * other work — e.g. `<ReplPreview/>` calls it right after the iframe
-   * element is attached so wasm downloads in parallel with the iframe's
-   * runtime + vendor data:-URL phase instead of sitting at the very end
-   * of the network waterfall.
+   * Apply a new file snapshot.
    *
-   * Errors are not thrown here — they surface on the real `transformAll`
-   * call via the shared `workerReady` promise.
+   * - **First call (cold boot)**: compiles every file, emits in topological
+   *   order, awaits the worker round-trips so the consumer can batch them
+   *   into a single `boot` postMessage. Resolves when emission is complete.
+   * - **Subsequent calls**: diffs against the previous snapshot. Changed and
+   *   new files schedule debounced transforms; removals fire immediately
+   *   (CSS removals via `onCssRemove`; modules drop pending work and queue
+   *   a re-resolve pass for dependents). Resolves immediately — the
+   *   schedule, not the work, is what the consumer awaits here.
    */
-  prewarm(): Promise<void> {
-    return this.ensureWorker();
+  async setFiles(next: Files): Promise<void> {
+    if (this.detached || this.client.isDisposed()) return;
+    if (!this.bootStarted) {
+      this.bootStarted = true;
+      this.files = next;
+      await this.coldBoot();
+      return;
+    }
+    this.syncDiff(next);
   }
 
-  /** Stop processing and terminate the worker. */
-  dispose(): void {
-    this.disposed = true;
+  /** Detach this session. Subsequent `setFiles` calls become no-ops. */
+  detach(): void {
+    if (this.detached) return;
+    this.detached = true;
     for (const t of this.timers.values()) clearTimeout(t);
     this.timers.clear();
-    this.worker?.terminate();
-    this.worker = null;
-    this.workerReady = null;
+    this.client.releaseSession(this);
+  }
+
+  // --- internals ---
+
+  private async coldBoot(): Promise<void> {
+    await this.client.ensureWorker();
+    await initLexer();
+    if (this.detached) return;
+    const loader = this.client.opts.loader ?? defaultLoader;
+
+    // Compile virtuals (always TSX) and user files in parallel. CSS results
+    // are upserted right away; modules collect for the dep-graph + topo pass.
+    const mods: { path: string; code: string }[] = [];
+
+    await Promise.all([
+      ...Object.entries(this.client.virtualSources).map(async ([alias, source]) => {
+        const virtualKey = VIRTUAL_KEY_PREFIX + alias;
+        try {
+          const code = await this.client.runTransform(virtualKey, source, true);
+          mods.push({ path: virtualKey, code });
+        } catch (err) {
+          this.reportError(err, virtualKey);
+        }
+      }),
+      ...Object.entries(this.files).map(async ([path, source]) => {
+        try {
+          const result = await loader({ path, source, transform: this.boundTransform(path) });
+          if (!result) return;
+          if (result.kind === 'css') {
+            this.upsertCss(path, result.source);
+            return;
+          }
+          mods.push({ path, code: result.code });
+        } catch (err) {
+          this.reportError(err, path);
+        }
+      }),
+    ]);
+
+    if (this.detached) return;
+
+    // Discover dep graph from each module body. Bare specifiers that match a
+    // virtual alias produce a topo edge so virtuals are emitted before any
+    // consumer — `buildBlobUrl()` in the runtime can't substitute the alias
+    // for the virtual's blob URL otherwise.
+    const lexer = await import('es-module-lexer');
+    const depGraph = new Map<string, string[]>();
+    for (const m of mods) {
+      try {
+        const [specs] = lexer.parse(m.code);
+        const deps: string[] = [];
+        for (const s of specs) {
+          const raw = s.n ?? (s.s >= 0 ? m.code.slice(s.s, s.e) : '');
+          const name = raw.replace(/^['"]|['"]$/g, '');
+          if (name.startsWith('./') || name.startsWith('/')) {
+            const tgt = resolveRelative(name, this.files);
+            if (tgt) deps.push(tgt);
+          } else if (this.client.virtualAliases.has(name)) {
+            deps.push(VIRTUAL_KEY_PREFIX + name);
+          }
+        }
+        depGraph.set(m.path, deps);
+      } catch {
+        depGraph.set(m.path, []);
+      }
+    }
+
+    const { order, cycles } = topoSort(depGraph);
+    for (const cycle of cycles) {
+      // Surface the cycle as a transform error on the entry node so the
+      // overlay points at a real file the user can fix.
+      this.handlers.onError({
+        kind: 'transform',
+        path: cycle[0]!,
+        message: `Circular import: ${cycle.join(' → ')} → ${cycle[0]!}`,
+      });
+    }
+
+    const byPath = new Map(mods.map((m) => [m.path, m]));
+    for (const path of order) {
+      const m = byPath.get(path);
+      if (!m) continue;
+      try {
+        const rewritten = rewriteImports(path, m.code, this.files, this.client.virtualAliases);
+        this.handlers.onModule({ path, code: rewritten.code, deps: rewritten.deps });
+      } catch (err) {
+        this.reportError(err, path);
+      }
+    }
+  }
+
+  private syncDiff(next: Files): void {
+    const prev = this.files;
+    this.files = next;
+
+    let moduleRemoved = false;
+    for (const path of Object.keys(prev)) {
+      if (!(path in next)) {
+        // We don't maintain a reverse-dep index, so any module removal
+        // forces re-resolution across the rest of the graph.
+        if (!this.cssPaths.has(path)) moduleRemoved = true;
+        this.handleRemoval(path);
+      }
+    }
+
+    for (const path of Object.keys(next)) {
+      const newSource = next[path]!;
+      if (prev[path] === newSource) continue;
+      this.scheduleTransform(path, newSource);
+    }
+
+    if (moduleRemoved) {
+      for (const path of Object.keys(next)) {
+        this.scheduleTransform(path, next[path]!);
+      }
+    }
+  }
+
+  private scheduleTransform(path: string, source: string): void {
+    this.latestSource.set(path, source);
+    const existing = this.timers.get(path);
+    if (existing) clearTimeout(existing);
+    const debounce = this.client.opts.debounceMs ?? DEFAULT_DEBOUNCE_MS;
+    const timer = setTimeout(() => {
+      this.timers.delete(path);
+      void this.processOne(path);
+    }, debounce);
+    this.timers.set(path, timer);
+  }
+
+  private async processOne(path: string): Promise<void> {
+    if (this.detached || this.client.isDisposed()) return;
+    const source = this.latestSource.get(path);
+    if (source === undefined) return;
+    try {
+      await this.client.ensureWorker();
+      if (this.detached) return;
+      const loader = this.client.opts.loader ?? defaultLoader;
+      const result = await loader({ path, source, transform: this.boundTransform(path) });
+      if (this.detached) return;
+      if (!result) return;
+      if (result.kind === 'css') {
+        this.upsertCss(path, result.source);
+        return;
+      }
+      await initLexer();
+      if (this.detached) return;
+      const rewritten = rewriteImports(path, result.code, this.files, this.client.virtualAliases);
+      if (this.detached) return;
+      this.handlers.onModule({ path, code: rewritten.code, deps: rewritten.deps });
+    } catch (err) {
+      this.reportError(err, path);
+    }
+  }
+
+  private boundTransform(path: string): ReplTransform {
+    return (src, opts) => this.client.runTransform(path, src, opts?.tsx);
+  }
+
+  private upsertCss(path: string, css: string): void {
+    this.cssPaths.add(path);
+    this.handlers.onCssUpsert(path, css);
+  }
+
+  private removeCss(path: string): void {
+    this.cssPaths.delete(path);
+    this.handlers.onCssRemove(path);
+  }
+
+  private handleRemoval(path: string): void {
+    if (this.cssPaths.has(path)) {
+      this.removeCss(path);
+      return;
+    }
+    this.latestSource.delete(path);
+    const t = this.timers.get(path);
+    if (t) {
+      clearTimeout(t);
+      this.timers.delete(path);
+    }
+  }
+
+  private reportError(err: unknown, path: string): void {
+    if (this.detached) return;
+    if (err instanceof ResolveError) {
+      this.handlers.onError({
+        kind: 'resolve',
+        path: err.path,
+        message: err.message,
+        specifier: err.specifier,
+      });
+      return;
+    }
+    if (isTransformError(err)) {
+      this.handlers.onError({
+        kind: 'transform',
+        path: err.path,
+        message: err.message,
+        ...(err.loc ? { loc: err.loc } : {}),
+      });
+      return;
+    }
+    this.handlers.onError({
+      kind: 'transform',
+      path,
+      message: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 
-function topoSort(graph: Map<string, string[]>): string[] {
+/**
+ * Topological sort with cycle detection. Returns the dependency-first
+ * order plus the cycles encountered (each as the chain of nodes from the
+ * cycle entry back to itself, exclusive of the closing repeat). Cycles are
+ * deduped by canonical rotation (start at the lex-smallest node), so a
+ * graph with multiple back-edges into the same cycle reports it once.
+ */
+function topoSort(graph: Map<string, string[]>): { order: string[]; cycles: string[][] } {
   const visited = new Set<string>();
+  const stack: string[] = [];
   const onStack = new Set<string>();
   const order: string[] = [];
+  const seenCycles = new Set<string>();
+  const cycles: string[][] = [];
 
   function visit(node: string): void {
     if (visited.has(node)) return;
-    if (onStack.has(node)) return;
+    if (onStack.has(node)) {
+      const idx = stack.indexOf(node);
+      if (idx >= 0) {
+        const cycle = stack.slice(idx);
+        const canonical = canonicalRotation(cycle);
+        const key = canonical.join('\n');
+        if (!seenCycles.has(key)) {
+          seenCycles.add(key);
+          cycles.push(canonical);
+        }
+      }
+      return;
+    }
     onStack.add(node);
+    stack.push(node);
     const deps = graph.get(node) ?? [];
     for (const d of deps) visit(d);
+    stack.pop();
     onStack.delete(node);
     visited.add(node);
     order.push(node);
   }
 
   for (const node of graph.keys()) visit(node);
-  return order;
+  return { order, cycles };
 }
 
-function resolveLogical(name: string, files: Record<string, string>): string | null {
-  // Mirror `resolveRelative` from path-utils to avoid a circular import.
-  const stripped = name.replace(/^\.\//, '').replace(/^\//, '');
-  if (files[stripped] !== undefined) return stripped;
-  for (const ext of ['.tsx', '.ts', '.jsx', '.js']) {
-    if (files[stripped + ext] !== undefined) return stripped + ext;
+function canonicalRotation(cycle: string[]): string[] {
+  let minIdx = 0;
+  for (let i = 1; i < cycle.length; i++) {
+    if (cycle[i]! < cycle[minIdx]!) minIdx = i;
   }
-  return null;
+  return minIdx === 0 ? cycle : [...cycle.slice(minIdx), ...cycle.slice(0, minIdx)];
 }
 
 function isTransformError(err: unknown): err is TransformError & { __isTransformError: true } {

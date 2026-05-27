@@ -68,14 +68,15 @@ if (typeof self !== 'undefined' && !self.MonacoEnvironment) {
 
 export type MonacoReplEditorProps = ReplEditorProps & {
   /**
-   * Monaco theme. When omitted, the adapter tracks the cascade reactively
-   * via {@link ColorSchemeWatcher} (`vs-dark` for dark, `vs` for light) so
-   * the editor follows OS appearance toggles live. Pass an explicit value
-   * to opt out — the auto-switching watcher is not rendered in that case.
+   * Monaco theme. The string `'auto'` (the default) wires
+   * {@link ColorSchemeWatcher} so the editor follows the page's
+   * `color-scheme` cascade reactively — `vs-dark` for dark, `vs` for
+   * light. Pass any other registered theme name to pin it; the watcher is
+   * not rendered when pinned.
    *
-   * @defaultValue tracks `color-scheme`
+   * @defaultValue `'auto'`
    */
-  theme?: string;
+  theme?: 'auto' | (string & {});
   /** Pass-through to monaco's `IStandaloneEditorConstructionOptions`. */
   options?: monaco.editor.IStandaloneEditorConstructionOptions;
   /**
@@ -258,12 +259,13 @@ export function MonacoReplEditor(props: MonacoReplEditorProps): React.ReactEleme
       ...diagnosticsOptionsRef.current,
     });
 
-    // When `props.theme` is undefined, the `<ColorSchemeWatcher>` rendered
-    // below has already fired its initial `onChange` during the ref pass
-    // (refs run before effects, children before parents), and that handler
-    // calls `monaco.editor.setTheme` — global state every newly-created
-    // editor consumes. So we omit `theme` here and let the just-set global
-    // win, instead of doing a parallel synchronous read.
+    // In 'auto' mode the `<ColorSchemeWatcher>` rendered below has already
+    // fired its initial onChange during the ref pass (refs run before
+    // effects, children before parents) and called `monaco.editor.setTheme`
+    // — global state every newly-created editor consumes. So we omit
+    // `theme` here and let the just-set global win, instead of doing a
+    // parallel synchronous matchMedia read.
+    const initialTheme = props.theme === 'auto' ? undefined : props.theme;
     const editor = monaco.editor.create(containerRef.current, {
       automaticLayout: true,
       tabSize: 2,
@@ -272,7 +274,7 @@ export function MonacoReplEditor(props: MonacoReplEditorProps): React.ReactEleme
       fontSize: 13,
       lineNumbers: 'on',
       renderLineHighlight: 'all',
-      ...(props.theme !== undefined && { theme: props.theme }),
+      ...(initialTheme !== undefined && { theme: initialTheme }),
       // JSX in Monaco uses the standard `typescript` language; richer
       // coloring (intrinsic vs. component tags, parameters, types) comes
       // from the TS worker's semantic-token provider, which is off by
@@ -414,6 +416,7 @@ export function MonacoReplEditor(props: MonacoReplEditorProps): React.ReactEleme
     }
   }, [props.path, props.value, props.language]);
 
+  const autoTheme = props.theme === undefined || props.theme === 'auto';
   return (
     <>
       <div
@@ -421,13 +424,13 @@ export function MonacoReplEditor(props: MonacoReplEditorProps): React.ReactEleme
         className={`repl-editor-monaco ${props.className ?? ''}`}
         style={{ width: '100%', height: '100%', ...props.style }}
       ></div>
-      {props.theme === undefined && (
+      {autoTheme && (
         <ColorSchemeWatcher
           onChange={(scheme) => {
-            // `monaco.editor.setTheme` is global Monaco state — it restyles
-            // every live editor on the page. That's the right behavior for
-            // a cascade-driven default; consumers wanting per-editor pinning
-            // pass `theme` explicitly, which skips this watcher entirely.
+            // `monaco.editor.setTheme` is global Monaco state — restyles
+            // every live editor on the page. Correct for a cascade-driven
+            // default; consumers wanting per-editor pinning pass an explicit
+            // theme name, which skips this watcher.
             monaco.editor.setTheme(scheme === 'dark' ? 'vs-dark' : 'vs');
           }}
         />

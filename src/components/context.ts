@@ -21,7 +21,8 @@ import type {
   LanguageMap,
   ReplError,
   ReplLoader,
-  VendorBundle,
+  Resolvable,
+  TypeBundle,
   VirtualModules,
 } from '../types.ts';
 
@@ -30,8 +31,6 @@ export type ReplStateContextValue = {
   files: Files;
   /** Currently selected file path in the editor. */
   activePath: string | null;
-  /** The most recent error, or null if cleared. */
-  lastError: ReplError | null;
   /**
    * Monotonic counter bumped by {@link ReplActionsContextValue.reloadPreview}.
    * `<ReplPreview/>` reads it as the iframe's `key` so a bump forces a full
@@ -40,6 +39,11 @@ export type ReplStateContextValue = {
    * @internal
    */
   previewReloadKey: number;
+};
+
+export type ReplErrorContextValue = {
+  /** The most recent error, or null if cleared. */
+  lastError: ReplError | null;
 };
 
 /**
@@ -81,13 +85,14 @@ export type ReplActionsContextValue = {
    */
   importMap: ImportMap | null;
   /**
-   * The `vendor.types` thunk / value, surfaced as soon as the outer vendor
-   * bundle is resolved — *before* `vendor.importMap` finishes resolving.
-   * `<EditorHost/>` reads this so the `.d.ts` chunk can download in parallel
-   * with the import-map chunk instead of serializing behind it. `undefined`
-   * when the bundle has no `types` field or hasn't been resolved yet.
+   * The `vendor.types` value (still in its unresolved form — thunk, Promise,
+   * default-wrapper, or sync `TypeBundle`). Surfaced as soon as the outer
+   * vendor bundle is in hand, *before* `vendor.importMap` finishes resolving,
+   * so the .d.ts chunk races the import-map chunk instead of serializing
+   * behind it. `undefined` when the bundle has no `types` field or hasn't
+   * resolved yet.
    */
-  types: VendorBundle['types'] | undefined;
+  types: Resolvable<TypeBundle> | undefined;
   /** swc-wasm URL override (snapshotted on first mount). */
   swcWasmUrl: string | undefined;
   /** Optional file pre-processor (snapshotted on first mount). */
@@ -141,3 +146,4 @@ export type ReplActionsContextValue = {
 
 export const ReplStateContext = createContext<ReplStateContextValue | null>(null);
 export const ReplActionsContext = createContext<ReplActionsContextValue | null>(null);
+export const ReplErrorContext = createContext<ReplErrorContextValue | null>(null);

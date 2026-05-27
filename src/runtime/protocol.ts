@@ -46,7 +46,12 @@ export type ToIframe =
   | { kind: 'reset' }
   // Carries the picker bundle (ESM source) so the runtime can dynamic-import
   // it via a blob URL on first inspect activation. Sent by `<InspectMode/>`.
-  | { kind: 'inspect:install'; code: string };
+  | { kind: 'inspect:install'; code: string }
+  // Forwarded to the lazily-installed picker module — the runtime itself
+  // does not act on these, but they ride the same `__repl` channel and
+  // must be in the type so the runtime's exhaustiveness check passes.
+  | { kind: 'inspect:enable'; overlayClassName?: string }
+  | { kind: 'inspect:disable' };
 
 /** Messages from iframe → main thread. */
 export type FromIframe =

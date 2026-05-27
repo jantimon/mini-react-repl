@@ -59,6 +59,7 @@ export function Repl(props: ReplProps): React.ReactElement {
     onMounted,
     iframeRef,
     sandbox,
+    unsafeDropSandbox,
     allow,
     referrerPolicy,
     onAddFile,
@@ -73,23 +74,21 @@ export function Repl(props: ReplProps): React.ReactElement {
     <ReplProvider {...providerProps}>
       <div className={`repl-root ${className ?? ''}`} style={style}>
         <div className="repl-root__main">
-          <ReplFileTabs
-            {...(onAddFile ? { onAddFile } : {})}
-            {...(onDeleteFile ? { onDeleteFile } : {})}
-          />
+          <ReplFileTabs onAddFile={onAddFile} onDeleteFile={onDeleteFile} />
           <EditorHost editor={editor} />
         </div>
         <div className="repl-root__side">
           <ReplPreview
-            {...(headHtml !== undefined ? { headHtml } : {})}
-            {...(bodyHtml !== undefined ? { bodyHtml } : {})}
-            {...(showPreviewErrorOverlay !== undefined ? { showPreviewErrorOverlay } : {})}
-            {...(onPreviewError ? { onPreviewError } : {})}
-            {...(onMounted ? { onMounted } : {})}
-            {...(iframeRef ? { iframeRef } : {})}
-            {...(sandbox !== undefined ? { sandbox } : {})}
-            {...(allow !== undefined ? { allow } : {})}
-            {...(referrerPolicy !== undefined ? { referrerPolicy } : {})}
+            headHtml={headHtml}
+            bodyHtml={bodyHtml}
+            showPreviewErrorOverlay={showPreviewErrorOverlay}
+            onPreviewError={onPreviewError}
+            onMounted={onMounted}
+            iframeRef={iframeRef}
+            sandbox={sandbox}
+            unsafeDropSandbox={unsafeDropSandbox}
+            allow={allow}
+            referrerPolicy={referrerPolicy}
           />
         </div>
       </div>

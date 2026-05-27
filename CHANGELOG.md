@@ -2,6 +2,92 @@
 
 All notable changes to `mini-react-repl`. Dates are YYYY-MM-DD.
 
+## 0.17.0 — 2026-05-27
+
+### Changed (breaking)
+
+- **`VendorBundle` types collapsed into `Resolvable<T>`.** The 3-way union
+  for `importMap` / `types` (sync / Promise / thunk, each optionally
+  wrapped in `{ default: T }`) is now one recursive `Resolvable<T>` helper,
+  exported from the package root. No runtime change — every `vendor` value
+  that worked before still works.
+- **`<ReplProvider activePath>` is a discriminated union.** Controlled
+  mode (`activePath` provided) now requires `onActivePathChange`;
+  uncontrolled mode optionally takes `defaultActivePath` plus an advisory
+  `onActivePathChange`. Mixing them is a compile error instead of silently
+  letting `defaultActivePath` win.
+- **`<ReplPreview sandbox={null}>` → `unsafeDropSandbox`.**
+  ```diff
+  - <ReplPreview sandbox={null} />
+  + <ReplPreview unsafeDropSandbox />
+  ```
+  The default sandbox tokens are exported as `DEFAULT_SANDBOX` from the
+  package root so consumers can extend rather than re-type.
+- **`MonacoReplEditor theme="auto"`** is the explicit sentinel for "track
+  the `color-scheme` cascade" (previously `theme={undefined}`). `'auto'`
+  is the default; pass any registered theme name to pin.
+- **`defaultLoader` moved to `mini-react-repl/loader`** so REPL-only
+  consumers don't pull it into their root chunk.
+  ```diff
+  - import { defaultLoader } from 'mini-react-repl';
+  + import { defaultLoader } from 'mini-react-repl/loader';
+  ```
+- **`useRepl()` no longer carries `lastError`.** Read it via the new
+  `useReplError()` hook. File-editing UIs no longer re-render when an
+  error appears or clears.
+- **`mini-react-repl/vendor-builder` subpath removed.** The programmatic
+  `build()` Node API is no longer published. The `repl-vendor-build` CLI
+  is the only supported entry point — wire it into your build via an npm
+  script or pre-build hook.
+- **`loadVendorImportMap` / `loadVendorTypes` removed.**
+  `mini-react-repl/vendor-default` exports only `defaultVendor` now.
+  Prefetch via the lazy thunks directly:
+  ```diff
+  - button.addEventListener('pointerover', () => void loadVendorImportMap())
+  + button.addEventListener('pointerover', () => void defaultVendor.importMap())
+  ```
+
+### Added
+
+- **Circular-import detection.** Cold-boot topo-sort surfaces cycles as
+  transform errors (`Circular import: A → B → C → A`).
+- **`useReplError()` hook**, plus `DEFAULT_SANDBOX` and `Resolvable<T>`
+  re-exports from the package root.
+- **`<ReplFileTabs entry>` prop** to override the protected entry path
+  independently of `<ReplProvider entry>`.
+- **`repl-vendor-build --export-name <name>` flag** to rename the
+  generated `VendorBundle` constant (CLI default stays `customVendor`).
+- **Dev-time warning** when a `virtualModules` key shadows a
+  `vendor.importMap.imports` key.
+
+### Fixed
+
+- **Tab close button is keyboard-accessible.** It's now a real `<button>`
+  sibling of the `<button role="tab">`, both wrapped in a
+  `role="presentation"` span. Each tab and close button is reachable via
+  Tab in document order; Enter / Space activate. (No arrow-key navigation
+  between tabs yet.)
+- **`prewarm()` errors no longer disappear.** Worker-init failures during
+  prewarm route through `onWorkerError` (or reject the returned promise
+  when none is set).
+
+### Migration
+
+1. **Sandbox**: `sandbox={null}` → `unsafeDropSandbox`.
+2. **Loader**: import `defaultLoader` from `mini-react-repl/loader`.
+3. **Controlled active path**: if you pass `activePath`, also pass
+   `onActivePathChange`. If you used `defaultActivePath`, drop
+   `activePath`.
+4. **Errors**: if you read `lastError` from `useRepl()`, switch to
+   `useReplError()`.
+5. **Programmatic vendor build**: drop
+   `import { build } from 'mini-react-repl/vendor-builder'` and invoke
+   the CLI instead (`"build:vendor": "repl-vendor-build src/vendor.entry.ts"`).
+   The output folder is identical.
+6. **Vendor prefetch helpers**: replace `loadVendorImportMap()` /
+   `loadVendorTypes()` with `defaultVendor.importMap()` /
+   `defaultVendor.types()`.
+
 ## 0.16.0 - 2026-05-27
 
 ### Changed (breaking)

@@ -18,6 +18,7 @@ npm i mini-react-repl monaco-editor react react-dom
 ```tsx
 import { useState } from 'react';
 import { Repl } from 'mini-react-repl';
+import { defaultVendor } from 'mini-react-repl/vendor-default';
 import { MonacoReplEditor } from 'mini-react-repl/editor-monaco';
 import 'mini-react-repl/theme.css';
 
@@ -28,12 +29,7 @@ const HELLO = {
 export default function Playground() {
   const [files, setFiles] = useState(HELLO);
   return (
-    <Repl
-      editor={MonacoReplEditor}
-      files={files}
-      onFilesChange={setFiles}
-      vendor={import('mini-react-repl/vendor-default')}
-    />
+    <Repl editor={MonacoReplEditor} files={files} onFilesChange={setFiles} vendor={defaultVendor} />
   );
 }
 ```
@@ -75,33 +71,6 @@ or [StackBlitz WebContainers](https://webcontainers.io/) (monthly subscription) 
 
 ---
 
-## How it actually works
-
-The interesting part, and the part that took the longest to get right.
-
-1. you change a file. `<ReplProvider/>` debounces 150ms.
-2. the changed file is shipped to a Web Worker running `swc-wasm`. swc
-   strips types, transforms JSX (automatic runtime), and injects React
-   Refresh signatures.
-3. main thread takes the JS back, runs an import-rewrite pass:
-   - bare specifiers (`'react'`, `'date-fns'`) are left alone — the iframe
-     has a native `<script type="importmap">` that resolves them
-   - relative specifiers (`'./Counter'`) get rewritten to the current blob
-     URL of that logical path
-4. wrapped code becomes a `Blob`, becomes a `URL.createObjectURL`, gets
-   `postMessage`d to the iframe.
-5. the iframe imports the blob URL. on top-level execution, the module
-   `commit()`s itself into a global registry keyed by **logical path**, not
-   blob URL. React Refresh sees stable IDs, patches components in place,
-   state survives.
-
-The iframe itself is a srcdoc — generated once, never recomputed on file
-edits. blobs come and go through postMessage. errors come back the same way.
-
-That's the whole pipeline. ~30KB of glue around swc-wasm and react-refresh.
-
----
-
 ## API
 
 ```ts
@@ -117,80 +86,27 @@ import {
 
 ### `<Repl/>` props
 
-| prop                      | type                                              | required | default      |                                                                     |
-| ------------------------- | ------------------------------------------------- | -------- | ------------ | ------------------------------------------------------------------- |
-| `files`                   | `Record<string, string>`                          | yes      | —            | flat path → source map                                              |
-| `onFilesChange`           | `(next) => void`                                  | yes      | —            | called on every set/remove/rename                                   |
-| `vendor`                  | `VendorBundle`                                    | yes      | —            | `{ importMap, types? }`                                             |
-| `editor`                  | `React.FC<ReplEditorProps>`                       | yes      | —            | adapter component                                                   |
-| `entry`                   | `string`                                          | no       | `'App.tsx'`  | the logical entry path                                              |
-| `transformDebounceMs`     | `number`                                          | no       | `150`        |                                                                     |
-| `headHtml`                | `string`                                          | no       | `''`         | injected into iframe `<head>`                                       |
-| `bodyHtml`                | `string`                                          | no       | `''`         | injected into iframe `<body>`                                       |
-| `showPreviewErrorOverlay` | `boolean`                                         | no       | `true`       | toggle built-in overlay                                             |
-| `onPreviewError`          | `(err: ReplError) => void`                        | no       | —            | transform + runtime errors                                          |
-| `onMounted`               | `() => void`                                      | no       | —            | fires when the iframe runtime mounts the entry module               |
-| `iframeRef`               | `Ref<HTMLIFrameElement>`                          | no       | —            | forwarded to the underlying `<iframe>`; `postMessage` host data in  |
-| `onAddFile`               | `() => MaybePromise<string \| null \| undefined>` | no       | —            | custom add-file dialog; return the new path, or nullish to cancel   |
-| `onDeleteFile`            | `(path) => MaybePromise<boolean \| void>`         | no       | —            | confirm/cancel deletion; return `false` to cancel                   |
-| `swcWasmUrl`              | `string`                                          | no       | jsdelivr CDN | self-host this for offline / CI                                     |
-| `loader`                  | `ReplLoader`                                      | no       | —            | per-file pre-processor; see [Custom file types](#custom-file-types) |
-
-### Custom file types
-
-Every file flows through a loader. The default is `defaultLoader`, which
-implements the historic dispatch: `.css` → `<style>` injection,
-`.tsx` / `.ts` / `.jsx` / `.js` → swc-compiled module, anything else → ignored.
-
-Pass `loader` to replace it. The function runs once per file (on first load and
-on every change). It receives the file's `source` plus a `transform` function
-that's the same swc-wasm pipeline `defaultLoader` uses — call it from inside
-your loader if you need TS/JSX compilation. Return a `ReplLoaderResult` to
-claim the file, or `null` / `undefined` to skip it. Most loaders delegate
-unhandled extensions back to `defaultLoader`:
-
-```tsx
-import { defaultLoader, type ReplLoader } from 'mini-react-repl';
-
-const loader: ReplLoader = async (input) => {
-  if (input.path.endsWith('.sqlite')) {
-    // emit plain JS — no swc needed
-    return {
-      kind: 'module',
-      code: `export default ${JSON.stringify(parseSqlite(input.source))};`,
-    };
-  }
-  if (input.path.endsWith('.md')) {
-    // generate TSX, then run it through the same swc pass `.tsx` files use
-    const tsxSource = mdxToTsx(input.source);
-    return { kind: 'module', code: await input.transform(tsxSource, { tsx: true }) };
-  }
-  return defaultLoader(input);
-};
-
-<Repl
-  files={files}
-  onFilesChange={setFiles}
-  vendor={defaultVendor}
-  editor={MonacoReplEditor}
-  loader={loader}
-/>;
-```
-
-`ReplLoaderResult` is a discriminated union:
-
-| variant                            | meaning                                                                                                             |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `{ kind: 'css', source: string }`  | inject `source` as a `<style>` tag                                                                                  |
-| `{ kind: 'module', code: string }` | `code` is already-compiled JS; the engine runs `rewriteImports` on it so relative specifiers resolve to other files |
-| `null` / `undefined`               | skip the file                                                                                                       |
-
-A user file can `import data from './data.sqlite'` once the loader claims it
-— relative imports resolve against the `files` map by literal name first, so
-non-standard extensions just work as long as you write them out.
-
-The `loader` prop is boot-time only (like `vendor` / `entry`); to swap, remount
-the provider with a different `key`.
+| prop                      | type                                              | required | default                       |                                                                              |
+| ------------------------- | ------------------------------------------------- | -------- | ----------------------------- | ---------------------------------------------------------------------------- |
+| `files`                   | `Record<string, string>`                          | yes      | —                             | flat path → source map                                                       |
+| `onFilesChange`           | `(next) => void`                                  | yes      | —                             | called on every set/remove/rename                                            |
+| `vendor`                  | `VendorBundle \| Promise<{ default }>`            | yes      | —                             | `{ importMap, types? }`; promise/thunk forms code-split it                   |
+| `editor`                  | `React.FC<ReplEditorProps>`                       | yes      | —                             | adapter component                                                            |
+| `entry`                   | `string`                                          | no       | `'App.tsx'`                   | the logical entry path                                                       |
+| `transformDebounceMs`     | `number`                                          | no       | `150`                         |                                                                              |
+| `sandbox`                 | `string`                                          | no       | `'allow-scripts allow-forms'` | iframe `sandbox` tokens; pass extras to extend                               |
+| `unsafeDropSandbox`       | `true`                                            | no       | —                             | drop the `sandbox` attribute entirely (only for fully trusted code)          |
+| `virtualModules`          | `Record<string, string>`                          | no       | —                             | inline modules user code can import; see [Virtual modules](#virtual-modules) |
+| `headHtml`                | `string`                                          | no       | `''`                          | injected into iframe `<head>`                                                |
+| `bodyHtml`                | `string`                                          | no       | `''`                          | injected into iframe `<body>`                                                |
+| `showPreviewErrorOverlay` | `boolean`                                         | no       | `true`                        | toggle built-in overlay                                                      |
+| `onPreviewError`          | `(err: ReplError) => void`                        | no       | —                             | transform + runtime errors                                                   |
+| `onMounted`               | `() => void`                                      | no       | —                             | fires when the iframe runtime mounts the entry module                        |
+| `iframeRef`               | `Ref<HTMLIFrameElement>`                          | no       | —                             | forwarded to the underlying `<iframe>`; `postMessage` host data in           |
+| `onAddFile`               | `() => MaybePromise<string \| null \| undefined>` | no       | —                             | custom add-file dialog; return the new path, or nullish to cancel            |
+| `onDeleteFile`            | `(path) => MaybePromise<boolean \| void>`         | no       | —                             | confirm/cancel deletion; return `false` to cancel                            |
+| `swcWasmUrl`              | `string`                                          | no       | jsdelivr CDN                  | self-host this for offline / CI                                              |
+| `loader`                  | `ReplLoader`                                      | no       | —                             | per-file pre-processor; see [Custom file types](#custom-file-types)          |
 
 ### `useRepl()`
 
@@ -252,8 +168,9 @@ the import map and the `.d.ts` payload are both code-split. the import-map
 chunk loads when `<Repl/>` mounts; the types chunk loads when an editor
 mounts. preview-only or non-Monaco consumers never download types; routes
 that never mount `<Repl/>` ship neither. need to warm a chunk earlier
-(prefetch on hover, idle, etc.)? `loadVendorImportMap` / `loadVendorTypes`
-are exported from the same subpath.
+(prefetch on hover, idle, etc.)? call `defaultVendor.importMap()` or
+`defaultVendor.types()` directly — both return the same promise the
+library awaits on mount, so the chunks land in cache before they're needed.
 
 if your demo needs literally only those libs, stop reading.
 
@@ -306,15 +223,9 @@ Both the import-map and types are code-split. Routes that never mount
 SSR-safe. The generated `index.ts` has a loading-sequence diagram in
 its header comment if you want the details.
 
-Programmatic API if you want to run it from a script:
-
-```ts
-import { build } from 'mini-react-repl/vendor-builder';
-const { importMap, types } = await build({
-  entry: 'src/sandbox/vendor.entry.ts',
-  types: 'embed', // optional; default 'omit'
-});
-```
+The CLI is the only supported entry point — there is no public Node API.
+Wire it into your build via an npm script (`"build:vendor":
+"repl-vendor-build src/vendor.entry.ts"`) or a pre-build hook.
 
 ### Mix
 
@@ -415,11 +326,16 @@ Same for `diagnosticsOptions`. Both are passthroughs to
 `monaco.languages.typescript.typescriptDefaults`.
 
 If `vendor.types` is set (the default vendor pre-bakes it; the builder
-emits `repl.types.json` next to the chunks for custom vendors),
+emits `types.json` alongside `import-map.json` in the generated folder),
 `MonacoReplEditor` registers each `.d.ts` via `addExtraLib` so users get
 real diagnostics + hover signatures for vendor packages. `vendor.types`
-also accepts a `Promise<TypeBundle>` so a runtime `fetch('/vendor/repl.types.json')`
-loads in parallel to the rest of the app.
+also accepts a `Promise<TypeBundle>` or a thunk so the types chunk loads
+in parallel to the rest of the app — and can be skipped entirely on
+routes that never mount an editor.
+
+Monaco's theme defaults to `'auto'`, which wires up a tiny watcher that
+follows the host page's `prefers-color-scheme`. Pass any registered
+theme name (`'vs-dark'`, your own, …) to pin it and skip the watcher.
 
 ### CodeMirror? plain textarea?
 
@@ -432,6 +348,63 @@ const TextAreaEditor: React.FC<ReplEditorProps> = ({ value, onChange }) => (
 ```
 
 doesn't get more "bring your own" than that.
+
+---
+
+## Custom file types
+
+Every file flows through a loader. The default handles `.css` (injected as
+`<style>`) and `.tsx` / `.ts` / `.jsx` / `.js` (swc-compiled). Anything else
+is ignored.
+
+Pass `loader` to claim more extensions. The function runs once per file (on
+first load and on every change) and gets the file's `source` plus a
+`transform` function — the same swc-wasm pipeline the default loader uses —
+so you can keep delegating TS/JSX compilation. Return a `ReplLoaderResult`
+to claim the file, or `null` / `undefined` to fall through:
+
+```tsx
+import { defaultLoader, type ReplLoader } from 'mini-react-repl/loader';
+
+const loader: ReplLoader = async (input) => {
+  if (input.path.endsWith('.sqlite')) {
+    // emit plain JS — no swc needed
+    return {
+      kind: 'module',
+      code: `export default ${JSON.stringify(parseSqlite(input.source))};`,
+    };
+  }
+  if (input.path.endsWith('.md')) {
+    // generate TSX, then run it through the same swc pass `.tsx` files use
+    const tsxSource = mdxToTsx(input.source);
+    return { kind: 'module', code: await input.transform(tsxSource, { tsx: true }) };
+  }
+  return defaultLoader(input);
+};
+
+<Repl
+  files={files}
+  onFilesChange={setFiles}
+  vendor={defaultVendor}
+  editor={MonacoReplEditor}
+  loader={loader}
+/>;
+```
+
+`ReplLoaderResult` is a discriminated union:
+
+| variant                            | meaning                                                                                                             |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `{ kind: 'css', source: string }`  | inject `source` as a `<style>` tag                                                                                  |
+| `{ kind: 'module', code: string }` | `code` is already-compiled JS; the engine runs `rewriteImports` on it so relative specifiers resolve to other files |
+| `null` / `undefined`               | skip the file                                                                                                       |
+
+A user file can `import data from './data.sqlite'` once the loader claims it
+— relative imports resolve against the `files` map by literal name first, so
+non-standard extensions just work as long as you write them out.
+
+The `loader` prop is boot-time only (like `vendor` / `entry`); to swap, remount
+the provider with a different `key`.
 
 ---
 
@@ -575,6 +548,33 @@ yourself.
 
 ---
 
+## How it actually works
+
+The interesting part, and the part that took the longest to get right.
+
+1. you change a file. `<ReplProvider/>` debounces 150ms.
+2. the changed file is shipped to a Web Worker running `swc-wasm`. swc
+   strips types, transforms JSX (automatic runtime), and injects React
+   Refresh signatures.
+3. main thread takes the JS back, runs an import-rewrite pass:
+   - bare specifiers (`'react'`, `'date-fns'`) are left alone — the iframe
+     has a native `<script type="importmap">` that resolves them
+   - relative specifiers (`'./Counter'`) get rewritten to the current blob
+     URL of that logical path
+4. wrapped code becomes a `Blob`, becomes a `URL.createObjectURL`, gets
+   `postMessage`d to the iframe.
+5. the iframe imports the blob URL. on top-level execution, the module
+   `commit()`s itself into a global registry keyed by **logical path**, not
+   blob URL. React Refresh sees stable IDs, patches components in place,
+   state survives.
+
+The iframe itself is a srcdoc — generated once, never recomputed on file
+edits. blobs come and go through postMessage. errors come back the same way.
+
+That's the whole pipeline. ~30KB of glue around swc-wasm and react-refresh.
+
+---
+
 ## Caveats
 
 things that will bite you. read this part.
@@ -601,10 +601,12 @@ things that will bite you. read this part.
 - **rename/delete breaks importers.** no auto-fix. importing files will fail
   to transform, the overlay shows `Module not found`, last-good render stays.
   fix the import yourself. (consider this a feature: predictable, no magic.)
-- **no sandbox attribute on the iframe.** user code shares origin with your
-  app. if you're hosting third-party snippets, you want a separate origin —
-  v1 doesn't ship that. trust model is: people editing their own code on
-  their own machine.
+- **default sandbox is `allow-scripts allow-forms`.** the iframe runs with
+  a unique opaque origin, so user code can't reach `window.parent`,
+  `localStorage`, or cookies of your app. `unsafeDropSandbox` drops the
+  attribute entirely — only do that for fully trusted code. for hostile
+  inputs, additionally serve the host page from a separate origin so the
+  sandbox can't be undone by a host-side XSS.
 - **strictly controlled state means re-renders are yours to manage.** if you
   do `onFilesChange={files => setHeavyState(files)}` and `setHeavyState` is
   expensive, that's on you. the library debounces _transformation_ (150ms)
@@ -660,8 +662,9 @@ deep. you don't have to think about it.
 yes — the default vendor pre-bakes `.d.ts` for `react`, `react-dom`,
 `date-fns`, `dayjs`, `lodash-es`, and `MonacoReplEditor` registers them with
 Monaco's TS service via `addExtraLib`. for custom vendors, `repl-vendor-build`
-emits a `repl.types.json` next to the JS chunks. swc still strips types at
-runtime — diagnostics are editor-side only and don't gate the transform.
+emits a `types.json` next to `import-map.json` in the generated folder. swc
+still strips types at runtime — diagnostics are editor-side only and don't
+gate the transform.
 
 **does it work in Storybook / Docusaurus / Notion-like embeds?**
 yes — srcdoc preview means it doesn't care what frame it's rendered in.

@@ -43,8 +43,6 @@ export type RewriteResult = {
   code: string;
   /** Discovered relative deps: { specifier (as it appears in code), target (logical path) }. */
   deps: { specifier: string; target: string }[];
-  /** Bare specifiers used (informational; useful for missing-import warnings). */
-  bareSpecifiers: string[];
 };
 
 /**
@@ -85,7 +83,6 @@ export function rewriteImports(
 ): RewriteResult {
   const [specifiers] = parse(code);
   const deps: { specifier: string; target: string }[] = [];
-  const bareSpecifiers: string[] = [];
 
   let out = '';
   let pos = 0;
@@ -127,14 +124,14 @@ export function rewriteImports(
       deps.push({ specifier: name, target: VIRTUAL_KEY_PREFIX + name });
       out += isDynamic ? `'${name}'` : name;
     } else {
-      bareSpecifiers.push(name);
+      // Bare specifier — resolved by the iframe's import map. Pass through.
       out += isDynamic ? `'${name}'` : name;
     }
     pos = end;
   }
   out += code.slice(pos);
 
-  return { code: out, deps, bareSpecifiers };
+  return { code: out, deps };
 }
 
 function unquote(s: string): string | null {

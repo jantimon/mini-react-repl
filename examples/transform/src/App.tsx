@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import {
   Repl,
-  defaultLoader,
   type Files,
   type ReplLoader,
+  type TypeBundle,
   type VendorBundle,
 } from 'mini-react-repl';
-import { defaultVendor, loadVendorTypes } from 'mini-react-repl/vendor-default';
+import { defaultLoader } from 'mini-react-repl/loader';
+import { defaultVendor } from 'mini-react-repl/vendor-default';
 import { MonacoReplEditor } from 'mini-react-repl/editor-monaco';
 import 'mini-react-repl/theme.css';
 
@@ -28,10 +29,11 @@ const LOADER_AMBIENT_TYPES = `
 // Both `importMap` and `types` are lazy thunks on `defaultVendor`. Forward
 // the import-map thunk as-is; wrap the types thunk to merge in our ambient
 // `.d.ts` once the default types chunk lands.
+const baseTypes = defaultVendor.types as () => Promise<TypeBundle>;
 const vendor: VendorBundle = {
   importMap: defaultVendor.importMap,
   types: async () => {
-    const base = (await loadVendorTypes()).default;
+    const base = await baseTypes();
     return {
       libs: [...base.libs, { path: 'file:///loader-ambient.d.ts', content: LOADER_AMBIENT_TYPES }],
     };

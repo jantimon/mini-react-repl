@@ -37,6 +37,24 @@ type TransformMessage = {
 
 type IncomingMessage = InitMessage | TransformMessage;
 
+/**
+ * Messages the worker posts back to the main thread. Shared with the
+ * `TransformClient` consumer so its `onmessage` listener can narrow
+ * exhaustively.
+ */
+export type WorkerMessage =
+  | { kind: 'worker-loaded' }
+  | { kind: 'init-ok'; id: number }
+  | { kind: 'init-err'; id: number; message: string }
+  | { kind: 'transform-ok'; id: number; path: string; code: string }
+  | {
+      kind: 'transform-err';
+      id: number;
+      path: string;
+      message: string;
+      loc?: { line: number; column: number };
+    };
+
 let initialized: Promise<void> | null = null;
 
 async function ensureInit(wasmUrl: string): Promise<void> {

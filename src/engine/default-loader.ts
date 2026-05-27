@@ -1,5 +1,5 @@
 /**
- * The built-in {@link ReplLoader}. Implements the historic dispatch:
+ * The built-in {@link ReplLoader}. Extension-based dispatch:
  *
  *   - `.css`                          → injected as a `<style>` tag
  *   - `.tsx` / `.ts` / `.jsx` / `.js` → swc-compiled module
@@ -10,7 +10,7 @@
  *
  * @example
  * ```ts
- * import { defaultLoader, type ReplLoader } from 'mini-react-repl';
+ * import { defaultLoader, type ReplLoader } from 'mini-react-repl/loader';
  *
  * const loader: ReplLoader = async (input) => {
  *   if (input.path.endsWith('.sqlite')) {

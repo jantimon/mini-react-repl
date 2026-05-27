@@ -411,6 +411,17 @@ window.addEventListener('message', async (event: MessageEvent) => {
       postToParent({ kind: 'inspect:installed' });
       break;
     }
+    case 'inspect:enable':
+    case 'inspect:disable':
+      // No-ops in the runtime — these messages are forwarded to the lazily-
+      // installed picker module's own listener (registered when the picker
+      // bundle is imported above).
+      break;
+    default: {
+      // Exhaustiveness check — adding a new ToIframe variant trips here.
+      const _exhaustive: never = msg;
+      void _exhaustive;
+    }
   }
 });
 

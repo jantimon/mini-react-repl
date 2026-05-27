@@ -7,6 +7,7 @@
 
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { ReplActionsContext, ReplStateContext } from './context.ts';
+import { resolveValue } from './resolve.ts';
 import { languageFor } from '../engine/path-utils.ts';
 import type { LanguageMap, ReplEditorComponent, TypeBundle } from '../types.ts';
 
@@ -18,10 +19,6 @@ export type EditorHostProps = {
 
 function isResolvedTypes(v: unknown): v is TypeBundle {
   return v != null && typeof v === 'object' && Array.isArray((v as { libs?: unknown }).libs);
-}
-
-function unwrapTypesDefault(v: TypeBundle | { default: TypeBundle }): TypeBundle {
-  return isResolvedTypes(v) ? v : v.default;
 }
 
 function extensionOf(path: string): string {
@@ -41,19 +38,12 @@ export function EditorHost(props: EditorHostProps): React.ReactElement | null {
   const state = useContext(ReplStateContext);
   const actions = useContext(ReplActionsContext);
   if (!state || !actions) throw new Error('<EditorHost/> must be inside <ReplProvider/>');
-  const path = state.activePath;
-  const setFile = actions.setFile;
 
-  // Resolve `vendor.types` once. It may be a sync TypeBundle, a Promise that
-  // resolves to one, a JSON-import shape (`{ default: TypeBundle }`), or a
-  // function returning either — the function form lets the library defer
-  // expensive work (dynamic-import of an inlined .d.ts chunk, fetch of a
-  // hosted `repl.types.json`) until an editor actually mounts. We invoke the
-  // function here, inside the effect, so REPL-only / no-editor consumers
-  // never trigger it. `actions.types` is set as soon as the outer vendor
-  // bundle is in hand — *before* `vendor.importMap` resolves — so the
-  // `.d.ts` chunk downloads in parallel with the import-map chunk instead of
-  // serializing behind it.
+  // Vendor types arrive on their own timeline (independent of the import
+  // map) so the editor can mount immediately and the .d.ts chunk fills in
+  // diagnostics when it lands. Invoking `resolveValue` here, inside an
+  // effect, keeps the chunk from being requested when no editor is mounted
+  // — REPL-only consumers never reach this code.
   const rawTypes = actions.types;
   const [types, setTypes] = useState<TypeBundle | undefined>(() =>
     isResolvedTypes(rawTypes) ? rawTypes : undefined,
@@ -63,32 +53,30 @@ export function EditorHost(props: EditorHostProps): React.ReactElement | null {
       setTypes(undefined);
       return;
     }
-    const resolved = typeof rawTypes === 'function' ? rawTypes() : rawTypes;
-    if (isResolvedTypes(resolved)) {
-      setTypes(resolved);
+    const result = resolveValue(rawTypes, isResolvedTypes);
+    if (isResolvedTypes(result)) {
+      setTypes(result);
       return;
     }
     let cancelled = false;
-    Promise.resolve(resolved).then((v) => {
-      if (!cancelled) setTypes(unwrapTypesDefault(v));
+    result.then((v) => {
+      if (!cancelled) setTypes(v);
     });
     return () => {
       cancelled = true;
     };
   }, [rawTypes]);
 
-  // Stabilize onChange: identity changes only when path swaps (setFile is
-  // already stable). Lets adapters that put onChange in dep arrays behave.
+  const path = state.activePath;
+  const setFile = actions.setFile;
+
+  // Stable onChange: identity only changes when path swaps. Lets adapters
+  // that put onChange in dep arrays behave.
   const onChange = useCallback(
-    (next: string) => {
-      if (path) setFile(path, next);
-    },
+    (next: string) => (path ? setFile(path, next) : undefined),
     [path, setFile],
   );
 
-  // languages is documented boot-time but ref-stored anyway so identity
-  // churn (consumers passing inline records) doesn't matter and any late
-  // change still applies on the next active-file swap.
   const languagesRef = useRef(actions.languages);
   languagesRef.current = actions.languages;
 

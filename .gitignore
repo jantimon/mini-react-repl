@@ -37,6 +37,7 @@ playwright/.cache/
 
 # generated (re-built by `pnpm build`)
 src/runtime/runtime.bundled.ts
-src/vendor-default/data-import-map.ts
-src/vendor-default/data-types.ts
+src/vendor-default/index.ts
+src/vendor-default/import-map.json
+src/vendor-default/types.json
 examples/demo/public/swc.wasm

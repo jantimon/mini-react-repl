@@ -2,7 +2,7 @@
  * Headless engine + context provider.
  *
  * Holds:
- *   - the active file selection (this is internal UI state, not project state)
+ *   - the active file selection (UI state, not project state)
  *   - the most recent error (mirrored from `<ReplPreview/>` for hook access)
  *   - boot config snapshot (vendor / entry / swcWasmUrl)
  *
@@ -15,126 +15,78 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReplActionsContext,
+  ReplErrorContext,
   ReplStateContext,
   type ReplActionsContextValue,
+  type ReplErrorContextValue,
   type ReplIframeRegistry,
   type ReplStateContextValue,
 } from './context.ts';
+import { resolveValue } from './resolve.ts';
 import type {
   Files,
   ImportMap,
   LanguageMap,
+  Resolvable,
+  TypeBundle,
   VendorBundle,
   ReplError,
   ReplLoader,
   VirtualModules,
 } from '../types.ts';
 
-export type ReplProviderProps = {
+type ReplProviderBaseProps = {
   /** Source of truth for the file table. Required. */
   files: Files;
   /**
-   * Called for every set / remove / rename action with the next files object.
-   * The library does not debounce this — debounce on your side if it triggers
+   * Called on every set / remove / rename action with the next files object.
+   * Not debounced by the library — debounce on your side if it triggers
    * expensive work (IDB writes, server sync, history snapshots).
    */
   onFilesChange: (next: Files) => void;
   /**
-   * Controlled active-file selection. When defined (including `null`), the
-   * provider stops managing the active path internally; {@link onActivePathChange}
-   * fires on every change request and your handler decides whether to apply it
-   * by updating this prop. Mutually exclusive with {@link defaultActivePath}.
+   * Vendor bundle (import map + optional types). Accepts a sync
+   * {@link VendorBundle}, a dynamic import (`import('mini-react-repl/vendor-default')`),
+   * or any other {@link Resolvable} shape — the library waits for it on mount.
    *
-   * Use this to sync the selection with a router, persist it across reloads,
-   * or coordinate multiple panes.
+   * The bundle's `importMap` field can additionally resolve lazily via thunk
+   * or Promise; the iframe boots once the import map lands. **Boot-time only
+   * after resolution.** Subsequent identity changes warn in dev and are
+   * ignored; remount the provider with a different `key` prop to swap.
    */
-  activePath?: string | null;
+  vendor: Resolvable<VendorBundle>;
   /**
-   * Called whenever the active path *would* change.
-   *
-   * - **Controlled mode** ({@link activePath} is provided): your callback
-   *   decides whether to apply the new value by updating `activePath`. The
-   *   provider does not move the selection until you do.
-   * - **Uncontrolled mode**: the provider has already moved the selection;
-   *   the callback is informational (URL sync, telemetry, etc.).
-   *
-   * Fires for tab clicks, the "+" button, the post-delete fallback, and the
-   * auto-shift after a rename of the currently active file.
-   */
-  onActivePathChange?: (next: string | null) => void;
-  /**
-   * Vendor bundle (import map + optional types). Required.
-   *
-   * Accepts any of the following so consumers can code-split the payload
-   * with minimal boilerplate:
-   *
-   * - a sync `VendorBundle` (eager)
-   * - a `Promise<{ default: VendorBundle }>` — pass the dynamic import
-   *   e.g.: `import('mini-react-repl/vendor-default')`
-   *
-   * The bundle's `importMap` field can additionally be a thunk
-   * (`() => Promise<ImportMap | { default: ImportMap }>`) — what
-   * `repl-vendor-build` emits by default. The provider invokes the thunk
-   * on first render so the bundler code-splits the import-map JSON into
-   * its own chunk; the iframe boots once the chunk lands.
-   *
-   * The provider always renders its children. While the bundle is pending,
-   * `<ReplPreview/>` shows a sized placeholder until the import map lands;
-   * `<EditorHost/>` mounts without vendor types until the bundle resolves
-   * (types unblock as soon as the outer bundle is in hand, independent of
-   * the import-map resolution). File CRUD (`useRepl`, `<ReplFileTabs/>`)
-   * is unaffected and works immediately.
-   *
-   * **Boot-time only after resolution.** Latched on first resolution.
-   * Subsequent identity changes are ignored (a dev-mode warning fires). To
-   * swap vendors, remount the provider with a `key` prop.
-   */
-  vendor: VendorBundle | PromiseLike<VendorBundle | { default: VendorBundle }>;
-  /**
-   * Logical path of the entry module. **Boot-time only.** See {@link vendor}.
+   * Logical path of the entry module. **Boot-time only.**
    * @defaultValue `'App.tsx'`
    */
   entry?: string;
-  /**
-   * Self-hosted swc-wasm URL. **Boot-time only.** See {@link vendor}.
-   */
+  /** Self-hosted swc-wasm URL. **Boot-time only.** */
   swcWasmUrl?: string;
   /**
-   * Optional pre-processor invoked once per file. Lets you turn arbitrary
-   * file types (`.sqlite`, `.md`, `.json`, ...) into a JS module or CSS the
-   * REPL can execute. Return `null` to fall through to the built-in
-   * extension-based dispatch. **Boot-time only.** See {@link vendor}.
+   * Pre-processor invoked once per file. Lets you turn arbitrary file types
+   * (`.sqlite`, `.md`, `.json`, ...) into a JS module or CSS. Return `null`
+   * to fall through to the built-in extension dispatch. **Boot-time only.**
    */
   loader?: ReplLoader;
   /**
-   * Inline virtual modules: map of import specifier (e.g. `'@app/util'`)
-   * to TSX source. User code can `import { x } from '@app/util'` and the
-   * iframe runtime executes the compiled source; Monaco autocompletes
-   * against it. No bundling, hosting, or import-map entry required.
+   * Inline virtual modules: import specifier → TSX source. User code in the
+   * REPL can `import { x } from '@app/util'`; the iframe runtime executes
+   * the compiled source and Monaco autocompletes against it.
    *
-   * **Boot-time only.** See {@link vendor}. Hoist to a top-level `as const`
-   * so the reference stays stable; identity changes after mount fire a
-   * dev-warning and are ignored. Collisions with `vendor.importMap.imports`
-   * keys resolve in favor of the virtual. CSS aliases (`*.css`) are rejected
-   * with a `console.error` for now.
+   * **Boot-time only.** Hoist to a top-level `as const` so the reference
+   * stays stable. Collisions with `vendor.importMap.imports` keys resolve
+   * in favor of the virtual and warn in dev. CSS aliases (`*.css`) are
+   * rejected.
    */
   virtualModules?: VirtualModules;
   /**
    * TSX source for the synthetic root component the iframe mounts (the
-   * "shell"). Use this to wrap user code in a `<Suspense>` boundary, error
-   * boundary, theme provider, etc., without forcing the consumer to author
-   * (or know about) the wrapping in their own files.
+   * "shell"). Wrap user code in a `<Suspense>`, error boundary, or theme
+   * provider without forcing the consumer to author the wrapping.
    *
-   * If omitted, the library generates a pass-through shell that simply
-   * renders the entry component — visually identical to today's behavior.
-   *
-   * The string is compiled with the same swc pipeline as user files and
-   * injected as `ReplShell.tsx` in the engine's file table. It can do
-   * relative imports against user files (e.g. `import App from './App'`)
-   * and bare imports through the import map. Drop a `ReplShell.tsx` into
-   * `files` directly to take over from this prop and edit the shell live.
-   *
-   * **Boot-time only.** See {@link vendor}.
+   * Compiled with the same swc pipeline as user files and injected as
+   * `ReplShell.tsx`. Drop a `ReplShell.tsx` into `files` directly to take
+   * over from this prop and edit the shell live. **Boot-time only.**
    */
   shell?: string;
   /**
@@ -142,27 +94,44 @@ export type ReplProviderProps = {
    * {@link loader} to teach the editor about file types it doesn't
    * recognize — e.g. `.md` → `'markdown'`, `.json` → `'json'`.
    *
-   * Accepts a record keyed by extension (no leading dot) or a function:
+   * Falls back to the built-in dispatch (`.css` → `'css'`, `.js`/`.jsx`/
+   * `.mjs` → `'javascript'`, everything else → `'typescript'`) for unknown
+   * extensions / `undefined` returns.
    *
    * ```tsx
    * <Repl languages={{ md: 'markdown', json: 'json' }} ... />
    * <Repl languages={(path) => path.endsWith('.svg') ? 'xml' : undefined} ... />
    * ```
-   *
-   * Falls back to the built-in dispatch (`.css` → `'css'`, `.js`/`.jsx`/
-   * `.mjs` → `'javascript'`, everything else → `'typescript'`) for
-   * unknown extensions / `undefined` returns. The host stores the value
-   * in a ref and consults it on every active-file change; mappings are
-   * not expected to change at runtime, but identity changes are tolerated.
    */
   languages?: LanguageMap;
-  /**
-   * Initial selected file in uncontrolled mode. Ignored when
-   * {@link activePath} is provided. Defaults to {@link entry}.
-   */
-  defaultActivePath?: string;
   children?: React.ReactNode;
 };
+
+/**
+ * Active-path control mode. Two shapes the type system enforces are
+ * mutually exclusive:
+ *
+ * - **Uncontrolled** (no `activePath` prop): the provider owns the
+ *   selection. Optionally seed with `defaultActivePath` and observe
+ *   changes via `onActivePathChange`.
+ * - **Controlled** (`activePath` provided, including `null`): the consumer
+ *   owns the selection. `onActivePathChange` is required — when the user
+ *   clicks a tab the library calls it; the consumer decides whether to
+ *   update `activePath`. Mutually exclusive with `defaultActivePath`.
+ */
+type ActivePathProps =
+  | {
+      activePath?: undefined;
+      defaultActivePath?: string;
+      onActivePathChange?: (next: string | null) => void;
+    }
+  | {
+      activePath: string | null;
+      defaultActivePath?: never;
+      onActivePathChange: (next: string | null) => void;
+    };
+
+export type ReplProviderProps = ReplProviderBaseProps & ActivePathProps;
 
 function normalizeVirtualModules(input: VirtualModules): VirtualModules {
   const raw: VirtualModules = {};
@@ -170,8 +139,7 @@ function normalizeVirtualModules(input: VirtualModules): VirtualModules {
     if (alias.endsWith('.css')) {
       // eslint-disable-next-line no-console
       console.error(
-        `[mini-react-repl] virtualModules['${alias}']: CSS aliases are not yet supported. ` +
-          `Skipping. (Tracked for a future minor release.)`,
+        `[mini-react-repl] virtualModules['${alias}']: CSS aliases are not yet supported. Skipping.`,
       );
       continue;
     }
@@ -180,43 +148,23 @@ function normalizeVirtualModules(input: VirtualModules): VirtualModules {
   return raw;
 }
 
-function isThenable<T>(v: unknown): v is PromiseLike<T> {
-  return v != null && typeof (v as { then?: unknown }).then === 'function';
+function isPlainBundle(v: unknown): v is VendorBundle {
+  return typeof v === 'object' && v !== null && 'importMap' in v;
 }
 
-function unwrapDefault(v: VendorBundle | { default: VendorBundle }): VendorBundle {
-  return 'importMap' in v ? v : v.default;
-}
-
-function isPlainImportMap(v: VendorBundle['importMap']): v is ImportMap {
+function isPlainImportMap(v: unknown): v is ImportMap {
   return (
     typeof v === 'object' &&
     v !== null &&
     typeof (v as { imports?: unknown }).imports === 'object' &&
-    (v as { imports?: unknown }).imports !== null &&
-    typeof (v as { then?: unknown }).then !== 'function'
+    (v as { imports?: unknown }).imports !== null
   );
 }
 
-function unwrapImportMapDefault(v: ImportMap | { default: ImportMap }): ImportMap {
-  return 'imports' in v ? v : v.default;
-}
-
 /**
- * Resolve `vendor.importMap` to a plain `ImportMap`. Sync if already plain;
- * otherwise calls the thunk / awaits the promise. Failure rejects.
- */
-function resolveImportMap(input: VendorBundle['importMap']): Promise<ImportMap> | ImportMap {
-  if (isPlainImportMap(input)) return input;
-  const value = typeof input === 'function' ? input() : input;
-  if (isPlainImportMap(value)) return value;
-  return Promise.resolve(value).then(unwrapImportMapDefault);
-}
-
-/**
- * Wrap your editor + preview composition in this. Provides
- * {@link useRepl} and shared context to {@link ReplFileTabs},
- * {@link ReplPreview}, and any custom UIs.
+ * Wrap your editor + preview composition in this. Provides {@link useRepl}
+ * and shared context to {@link ReplFileTabs}, {@link ReplPreview}, and any
+ * custom UIs.
  *
  * @example
  * ```tsx
@@ -230,28 +178,20 @@ function resolveImportMap(input: VendorBundle['importMap']): Promise<ImportMap> 
 export function ReplProvider(props: ReplProviderProps): React.ReactElement {
   const vendorProp = props.vendor;
 
-  // The outer `vendor` prop has two independent async edges:
-  //   1. the prop itself may be a Promise (`vendor={import('./vendor')}`)
-  //   2. the bundle's `importMap` may be a thunk / Promise (the codegen
-  //      default — keeps the import-map JSON in its own chunk).
-  //
-  // `importMap` and `types` resolve on independent timelines and are
-  // surfaced through the actions context independently — `<ReplPreview/>`
-  // needs the import map inlined in the iframe srcdoc; `<EditorHost/>` only
-  // needs `types`. Sync-on-first-render for fully-sync bundles; promise-typed
-  // inputs flow through the effect.
-  const isVendorThenable = isThenable<VendorBundle | { default: VendorBundle }>(vendorProp);
+  // The vendor prop and its `importMap` field resolve on independent
+  // timelines so the .d.ts chunk can race the import-map chunk instead of
+  // serializing behind it. `types` is surfaced as soon as the outer bundle
+  // is in hand — *before* `vendor.importMap` finishes resolving — and the
+  // editor adapter awaits it with `use()`.
+  const initialBundle: VendorBundle | null = isPlainBundle(vendorProp) ? vendorProp : null;
   const initialImportMap: ImportMap | null =
-    !isVendorThenable && isPlainImportMap(vendorProp.importMap) ? vendorProp.importMap : null;
-  const initialTypes: VendorBundle['types'] | undefined = isVendorThenable
-    ? undefined
-    : vendorProp.types;
+    initialBundle && isPlainImportMap(initialBundle.importMap) ? initialBundle.importMap : null;
 
   const [importMap, setImportMap] = useState<ImportMap | null>(initialImportMap);
-  const [types, setTypes] = useState<VendorBundle['types'] | undefined>(initialTypes);
-  // True once the bundle has been resolved (sync prop OR promise fulfilled).
-  // Subsequent prop changes warn in dev and are ignored — vendor is boot-time
-  // only, like `entry` et al.
+  const [types, setTypes] = useState<Resolvable<TypeBundle> | undefined>(initialBundle?.types);
+  // Latched once the bundle is fully resolved. Subsequent prop changes
+  // warn in dev and are ignored — vendor is boot-time only, matching
+  // `entry` et al.
   const latchedRef = useRef<boolean>(initialImportMap !== null);
 
   useEffect(() => {
@@ -280,35 +220,29 @@ export function ReplProvider(props: ReplProviderProps): React.ReactElement {
 
     const finish = (bundle: VendorBundle): void => {
       if (cancelled) return;
-      // Surface `types` immediately so `<EditorHost/>` can start the .d.ts
-      // download in parallel with the import-map resolution. useState's
-      // functional setter is needed because `bundle.types` itself may be
-      // a function thunk, which the plain `setTypes(bundle.types)` form
-      // would call as an updater.
+      // Functional setter — `bundle.types` may itself be a thunk, which the
+      // direct setter form would treat as an updater.
       if (bundle.types) setTypes(() => bundle.types);
-      const importMapResult = resolveImportMap(bundle.importMap);
+      const mapResult = resolveValue(bundle.importMap, isPlainImportMap);
       const settle = (map: ImportMap): void => {
         if (cancelled) return;
         latchedRef.current = true;
         setImportMap(map);
       };
-      if (isPlainImportMap(importMapResult)) {
-        settle(importMapResult);
-        return;
-      }
-      importMapResult.then(settle, (err) => onError('vendor.importMap promise', err));
+      if (isPlainImportMap(mapResult)) settle(mapResult);
+      else mapResult.then(settle, (err) => onError('vendor.importMap', err));
     };
 
-    if (!isVendorThenable) {
+    if (isPlainBundle(vendorProp)) {
       finish(vendorProp);
       return () => {
         cancelled = true;
       };
     }
-    vendorProp.then(
+    Promise.resolve(vendorProp as PromiseLike<VendorBundle | { default: VendorBundle }>).then(
       (v) => {
         if (cancelled) return;
-        finish(unwrapDefault(v));
+        finish(isPlainBundle(v) ? v : v.default);
       },
       (err) => onError('vendor promise', err),
     );
@@ -323,57 +257,50 @@ export function ReplProvider(props: ReplProviderProps): React.ReactElement {
 
 type ReplProviderInnerProps = Omit<ReplProviderProps, 'vendor'> & {
   importMap: ImportMap | null;
-  types: VendorBundle['types'] | undefined;
+  types: Resolvable<TypeBundle> | undefined;
 };
 
 function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
-  // Boot config is snapshotted on first render. Subsequent prop changes are
-  // ignored (with a dev-mode warning) because changing them post-mount would
-  // require a full iframe + swc-wasm reboot. `vendor` is NOT in here — it
-  // may legitimately arrive late via a promise (latched in the outer
-  // `<ReplProvider/>`) and is forwarded through props on every render.
-  const [bootConfig] = useState(() => ({
-    entry: props.entry ?? 'App.tsx',
-    swcWasmUrl: props.swcWasmUrl,
-    loader: props.loader,
-    virtualModulesProp: props.virtualModules,
-    virtualModules: normalizeVirtualModules(props.virtualModules ?? {}),
-    shell: props.shell,
-    languages: props.languages,
-  }));
+  // Boot config is snapshotted on first render. Changing post-mount would
+  // require a full iframe + swc-wasm reboot. `vendor` is NOT here — it may
+  // arrive late via a promise (latched in the outer provider) and is
+  // forwarded through props on every render.
+  const entry = useFreezeValue(props.entry ?? 'App.tsx', 'entry');
+  const swcWasmUrl = useFreezeValue(props.swcWasmUrl, 'swcWasmUrl');
+  const loader = useFreezeValue(props.loader, 'loader');
+  const virtualModulesProp = useFreezeValue(props.virtualModules, 'virtualModules');
+  const shell = useFreezeValue(props.shell, 'shell');
+  const languages = useFreezeValue(props.languages, 'languages');
+  const virtualModules = useMemo(
+    () => normalizeVirtualModules(virtualModulesProp ?? {}),
+    [virtualModulesProp],
+  );
 
-  if (process.env.NODE_ENV !== 'production') {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    useEffect(() => {
-      const warn = (name: string) => {
+  // Dev-only: warn once when an importMap key is shadowed by a virtualModules
+  // alias. Has to wait until the import map resolves; before that there's
+  // nothing to compare. Latched via ref so it fires exactly once per mount.
+  const shadowCheckedRef = useRef(false);
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'production') return;
+    if (shadowCheckedRef.current) return;
+    if (!props.importMap) return;
+    shadowCheckedRef.current = true;
+    const importMapKeys = new Set(Object.keys(props.importMap.imports));
+    for (const alias of Object.keys(virtualModulesProp ?? {})) {
+      if (importMapKeys.has(alias)) {
         // eslint-disable-next-line no-console
         console.warn(
-          `[mini-react-repl] <ReplProvider/> received a new \`${name}\` prop after mount. ` +
-            `${name} is boot-time only; the change is ignored. ` +
-            `To swap, remount the provider with a different \`key\` prop.`,
+          `[mini-react-repl] virtualModules['${alias}'] shadows a key in vendor.importMap.imports. ` +
+            `The virtual wins; user code's import resolves to the inline source.`,
         );
-      };
-      if ((props.entry ?? 'App.tsx') !== bootConfig.entry) warn('entry');
-      if (props.swcWasmUrl !== bootConfig.swcWasmUrl) warn('swcWasmUrl');
-      if (props.loader !== bootConfig.loader) warn('loader');
-      if (props.virtualModules !== bootConfig.virtualModulesProp) warn('virtualModules');
-      if (props.shell !== bootConfig.shell) warn('shell');
-      if (props.languages !== bootConfig.languages) warn('languages');
-    }, [
-      props.entry,
-      props.swcWasmUrl,
-      props.loader,
-      props.virtualModules,
-      props.shell,
-      props.languages,
-      bootConfig,
-    ]);
-  }
+      }
+    }
+  }, [props.importMap, virtualModulesProp]);
 
   const controlledActivePath = props.activePath;
   const isControlledActivePath = controlledActivePath !== undefined;
   const [internalActivePath, setInternalActivePath] = useState<string | null>(
-    props.defaultActivePath ?? bootConfig.entry,
+    props.defaultActivePath ?? entry,
   );
   const activePath: string | null = isControlledActivePath
     ? controlledActivePath
@@ -381,34 +308,60 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
   const [lastError, setLastError] = useState<ReplError | null>(null);
   const [previewReloadKey, setPreviewReloadKey] = useState(0);
 
-  // Latest-prop refs let us build CRUD callbacks once with stable identity.
-  // The documented `useRepl` contract promises stable callbacks — putting
-  // `props.files` in the dep array would break it on every keystroke.
-  const filesRef = useRef(props.files);
-  filesRef.current = props.files;
-  const onFilesChangeRef = useRef(props.onFilesChange);
-  onFilesChangeRef.current = props.onFilesChange;
-  const activePathRef = useRef(activePath);
-  activePathRef.current = activePath;
-  const isControlledActivePathRef = useRef(isControlledActivePath);
-  isControlledActivePathRef.current = isControlledActivePath;
-  const onActivePathChangeRef = useRef(props.onActivePathChange);
-  onActivePathChangeRef.current = props.onActivePathChange;
+  // Single "always-latest" bag of reactive props. The CRUD callbacks below
+  // read through this ref so their identity stays stable while the values
+  // they close over are fresh. The alternative — depending on `props.files`
+  // etc. in `useCallback` deps — would break the documented `useRepl`
+  // contract of stable callback identity on every keystroke.
+  const latestRef = useRef({
+    files: props.files,
+    onFilesChange: props.onFilesChange,
+    activePath,
+    isControlledActivePath,
+    onActivePathChange: props.onActivePathChange,
+  });
+  latestRef.current = {
+    files: props.files,
+    onFilesChange: props.onFilesChange,
+    activePath,
+    isControlledActivePath,
+    onActivePathChange: props.onActivePathChange,
+  };
 
   const setActivePath = useCallback((path: string) => {
-    if (activePathRef.current === path) return;
-    if (!isControlledActivePathRef.current) setInternalActivePath(path);
-    onActivePathChangeRef.current?.(path);
+    const latest = latestRef.current;
+    if (latest.activePath === path) return;
+    if (!latest.isControlledActivePath) setInternalActivePath(path);
+    latest.onActivePathChange?.(path);
   }, []);
 
   const setFile = useCallback((path: string, source: string) => {
-    onFilesChangeRef.current({ ...filesRef.current, [path]: source });
+    const latest = latestRef.current;
+    latest.onFilesChange({ ...latest.files, [path]: source });
   }, []);
 
   const removeFile = useCallback((path: string) => {
-    const next = { ...filesRef.current };
+    const latest = latestRef.current;
+    const next = { ...latest.files };
     delete next[path];
-    onFilesChangeRef.current(next);
+    latest.onFilesChange(next);
+  }, []);
+
+  const renameFile = useCallback((oldPath: string, newPath: string) => {
+    if (oldPath === newPath) return;
+    const latest = latestRef.current;
+    if (newPath in latest.files) {
+      throw new Error(`Cannot rename '${oldPath}' to '${newPath}': target already exists.`);
+    }
+    const next: Files = {};
+    for (const [k, v] of Object.entries(latest.files)) {
+      next[k === oldPath ? newPath : k] = v;
+    }
+    latest.onFilesChange(next);
+    if (latest.activePath === oldPath) {
+      if (!latest.isControlledActivePath) setInternalActivePath(newPath);
+      latest.onActivePathChange?.(newPath);
+    }
   }, []);
 
   const reloadPreview = useCallback(() => {
@@ -417,7 +370,7 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
   }, []);
 
   // Stable iframe registry: `<ReplPreview/>` writes the current iframe via
-  // `setIframe`, siblings (e.g. `<InspectMode/>`) subscribe. Identity is
+  // `setIframe`; siblings (e.g. `<InspectMode/>`) subscribe. Identity is
   // stable for the provider's lifetime so subscribers don't churn.
   const iframeRegistry = useMemo<ReplIframeRegistry>(() => {
     let current: HTMLIFrameElement | null = null;
@@ -439,35 +392,16 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
     };
   }, []);
 
-  const renameFile = useCallback((oldPath: string, newPath: string) => {
-    if (oldPath === newPath) return;
-    const files = filesRef.current;
-    if (newPath in files) {
-      throw new Error(`Cannot rename '${oldPath}' to '${newPath}': target already exists.`);
-    }
-    const next: Files = {};
-    for (const [k, v] of Object.entries(files)) {
-      next[k === oldPath ? newPath : k] = v;
-    }
-    onFilesChangeRef.current(next);
-    if (activePathRef.current === oldPath) {
-      if (!isControlledActivePathRef.current) setInternalActivePath(newPath);
-      onActivePathChangeRef.current?.(newPath);
-    }
-  }, []);
-
-  // Actions context — stable for the provider's lifetime. Consumers that
-  // only read this don't re-render on file edits.
   const actions = useMemo<ReplActionsContextValue>(
     () => ({
-      entry: bootConfig.entry,
+      entry,
       importMap: props.importMap,
       types: props.types,
-      swcWasmUrl: bootConfig.swcWasmUrl,
-      loader: bootConfig.loader,
-      virtualModules: bootConfig.virtualModules,
-      shell: bootConfig.shell,
-      languages: bootConfig.languages,
+      swcWasmUrl,
+      loader,
+      virtualModules,
+      shell,
+      languages,
       setActivePath,
       setFile,
       removeFile,
@@ -477,9 +411,14 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
       iframeRegistry,
     }),
     [
-      bootConfig,
+      entry,
       props.importMap,
       props.types,
+      swcWasmUrl,
+      loader,
+      virtualModules,
+      shell,
+      languages,
       setActivePath,
       setFile,
       removeFile,
@@ -493,15 +432,42 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
     () => ({
       files: props.files,
       activePath,
-      lastError,
       previewReloadKey,
     }),
-    [props.files, activePath, lastError, previewReloadKey],
+    [props.files, activePath, previewReloadKey],
   );
+
+  const errorState = useMemo<ReplErrorContextValue>(() => ({ lastError }), [lastError]);
 
   return (
     <ReplActionsContext.Provider value={actions}>
-      <ReplStateContext.Provider value={state}>{props.children}</ReplStateContext.Provider>
+      <ReplStateContext.Provider value={state}>
+        <ReplErrorContext.Provider value={errorState}>{props.children}</ReplErrorContext.Provider>
+      </ReplStateContext.Provider>
     </ReplActionsContext.Provider>
   );
+}
+
+/**
+ * Freeze a single prop on first render. In dev, warn if the identity ever
+ * changes — the library snapshots boot-time props (`entry`, `loader`, etc.)
+ * once and ignores later edits; the warning tells the consumer to remount
+ * via a different `key` instead.
+ *
+ * The effect body is a constant `false` branch in prod after minification,
+ * so the warning code drops out of the production bundle.
+ */
+function useFreezeValue<T>(value: T, name: string): T {
+  const [frozen] = useState<T>(() => value);
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'production') return;
+    if (value === frozen) return;
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[mini-react-repl] <ReplProvider/> received a new \`${name}\` prop after mount. ` +
+        `Props are frozen on first render; the change is ignored. ` +
+        `To swap, remount the provider with a different \`key\` prop.`,
+    );
+  }, [value, frozen, name]);
+  return frozen;
 }

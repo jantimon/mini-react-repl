@@ -1,5 +1,6 @@
 /**
- * Programmatic vendor-bundle builder.
+ * Vendor-bundle builder used by the `repl-vendor-build` CLI and by the
+ * in-repo `scripts/build-default-vendor.mjs` script.
  *
  * Reads a user-authored entry file (e.g. `vendor.ts`) that declares the bundle
  * shape via standard ESM `import * as X from '<spec>'; export { X as '<key>' }`,
@@ -17,17 +18,18 @@
  * descriptive error.
  *
  * Designed to run in Node, not in the browser (esbuild and the type walker
- * both require it).
+ * both require it). Not exposed as a public subpath — the CLI is the only
+ * supported entry point.
  *
  * @example
  * ```ts
- * import { build } from 'mini-react-repl/vendor-builder'
- * const vendor = await build({ entry: 'vendor.ts', types: 'embed' })
- * // vendor.importMap → { imports: { 'react': 'data:text/javascript;base64,...' } }
- * // vendor.types     → { libs: [{ path: 'file:///node_modules/react/index.d.ts', content: '...' }, ...] }
+ * // From scripts/build-default-vendor.mjs:
+ * import { runBuild } from '../src/vendor-builder/cli.ts'
+ * await runBuild({ entry: 'src/default-vendor.ts', outDir: 'src/vendor-default',
+ *                  nodeEnv: 'development', types: true, exportName: 'defaultVendor' })
  * ```
  *
- * @public
+ * @internal
  */
 
 import { readFile, stat } from 'node:fs/promises';
@@ -302,7 +304,7 @@ async function loadEsbuild(): Promise<typeof import('esbuild')> {
       esbuildPromise = null;
       const orig = err instanceof Error ? err.message : String(err);
       throw new Error(
-        "mini-react-repl/vendor-builder requires 'esbuild' (optional peer dependency). " +
+        "repl-vendor-build requires 'esbuild' (optional peer dependency). " +
           'Install it as a dev dep: `npm i -D esbuild` (or `pnpm add -D esbuild`). ' +
           `Original error: ${orig}`,
       );

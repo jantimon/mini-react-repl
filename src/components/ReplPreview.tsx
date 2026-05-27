@@ -1,17 +1,16 @@
 /**
  * Renders the preview iframe and owns the transform pipeline.
  *
- * Mounting: generates a srcdoc from the vendor + headHtml/bodyHtml inputs.
- * The srcdoc is recomputed only when those inputs change — never on file
- * edits. File edits flow through `postMessage` to the already-mounted iframe.
+ * The srcdoc is generated once per (vendor / headHtml / bodyHtml) inputs and
+ * stays constant across file edits. File edits flow through `postMessage`
+ * to the already-mounted iframe.
  *
- * Lifecycle inside this component:
- *   1. mount → generate srcdoc → iframe loads
- *   2. iframe runtime sends `ready`
- *   3. we boot the transform client (initializes swc-wasm in a worker)
- *   4. cold transform of every code file in dependency order
- *   5. send a single `boot` message containing all module URLs + CSS
- *   6. subsequent file changes flow through `client.syncFiles()`
+ * Lifecycle:
+ *   1. mount → construct `TransformClient` (worker prewarms in parallel)
+ *   2. import map lands → srcdoc is computed and the iframe mounts
+ *   3. iframe runtime sends `ready` → session is attached and cold-boot fires
+ *   4. cold boot finishes → single `boot` message sent with every module + CSS
+ *   5. subsequent file changes flow through `session.setFiles(next)`
  *
  * @public
  */
@@ -23,10 +22,20 @@ import {
   TransformClient,
   type ModulePayload,
   type TransformError,
+  type TransformSession,
 } from '../engine/transform-client.ts';
 import type { ToIframe, FromIframe } from '../runtime/protocol.ts';
 import type { ReplError } from '../types.ts';
 import { SHELL_PATH, withShellFile } from './shell.ts';
+
+/**
+ * Default `sandbox` attribute the iframe ships with. `allow-scripts` so user
+ * code runs; `allow-forms` so React `<form onSubmit>` handlers fire
+ * (Chromium blocks the submit event without it). `allow-same-origin`,
+ * `allow-top-navigation`, and `allow-popups` are deliberately excluded —
+ * user code runs cross-origin to the embedder.
+ */
+export const DEFAULT_SANDBOX = 'allow-scripts allow-forms';
 
 export type ReplPreviewProps = {
   headHtml?: string;
@@ -36,35 +45,35 @@ export type ReplPreviewProps = {
   onMounted?: () => void;
   /**
    * Forwarded to the underlying `<iframe>` element. Accepts an object ref
-   * (`useRef<HTMLIFrameElement>(null)`) or a callback ref. Use it together
-   * with `onMounted` to `postMessage` host-computed data into the iframe
-   * (e.g. SQL results, theme, env). Note that messages with
-   * `{ __repl: true, ... }` are reserved for the library's runtime
-   * protocol — pick a different shape for your own messages.
+   * (`useRef<HTMLIFrameElement>(null)`) or a callback ref. Pair with
+   * `onMounted` to `postMessage` host-computed data into the iframe.
+   * Messages with `{ __repl: true, ... }` are reserved for the runtime
+   * protocol — pick a different shape for your own.
    */
   iframeRef?: React.Ref<HTMLIFrameElement>;
   /**
-   * Sandbox tokens applied to the underlying `<iframe>`. Default:
-   * `'allow-scripts allow-forms'`. User code runs cross-origin to the
-   * embedder and cannot read parent cookies, DOM, or storage. `allow-forms`
-   * is included so `<form onSubmit>` handlers fire — Chromium blocks the
-   * submit event entirely without it. `allow-same-origin`,
-   * `allow-top-navigation`, and `allow-popups` are deliberately excluded.
-   *
-   * Set to `null` to drop the sandbox attribute entirely — required for
-   * features that need same-origin DOM access (e.g. external test runners
-   * reaching into `iframe.contentDocument`). Doing so makes user code
-   * same-origin with the embedder and able to act as the embedder.
+   * Sandbox tokens applied to the underlying `<iframe>`. Defaults to
+   * {@link DEFAULT_SANDBOX} (`'allow-scripts allow-forms'`). Pass a custom
+   * string to extend; pass {@link unsafeDropSandbox} to omit the attribute
+   * entirely.
    */
-  sandbox?: string | null;
+  sandbox?: string;
+  /**
+   * **Use with care.** When `true`, the `sandbox` attribute is omitted
+   * entirely — user code becomes same-origin with the embedder and can
+   * read parent cookies, mutate the parent DOM, and act as the user.
+   * Only set this in trusted contexts (test runners that need
+   * `iframe.contentDocument`, internal tooling).
+   */
+  unsafeDropSandbox?: true;
   /**
    * Permissions-Policy delegated to the iframe via the `allow` attribute.
-   * Default: `''` (deny all delegated features).
+   * Defaults to `''` (deny all delegated features).
    */
   allow?: string;
   /**
    * Referrer policy for outbound requests from the iframe.
-   * Default: `'no-referrer'`.
+   * Defaults to `'no-referrer'`.
    */
   referrerPolicy?: React.HTMLAttributeReferrerPolicy;
   className?: string;
@@ -74,10 +83,9 @@ export type ReplPreviewProps = {
 /**
  * Public wrapper. Re-keys the inner component on every `reloadPreview()` so
  * a hard reload tears down the {@link TransformClient} + worker and mounts
- * a fresh one (the documented recovery hatch). Boot config — `swcWasmUrl`,
- * `loader`, `virtualModules` — is documented as boot-time-only and not
- * included in the key; consumers who need to change it must remount the
- * provider via the documented `key` escape hatch.
+ * a fresh one — the documented recovery hatch. Boot config
+ * (`swcWasmUrl`, `loader`, `virtualModules`) is captured by the inner
+ * component on first mount.
  */
 export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
   const state = useContext(ReplStateContext);
@@ -97,48 +105,58 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
   const virtualModulesRaw = actions.virtualModules;
   const customShell = actions.shell;
   const importMap = actions.importMap;
+  const iframeRegistry = actions.iframeRegistry;
 
   // The iframe runtime mounts a synthetic shell module — never the user's
   // entry directly. `filesForEngine` is the engine-side file table (user
-  // files + injected `ReplShell.tsx`); `state.files` stays user-owned, so
+  // files + injected `ReplShell.tsx`); `state.files` stays user-owned so
   // tabs / Monaco / consumers see only what the consumer passed in.
   const filesForEngine = useMemo(
     () => withShellFile(state.files, entry, customShell),
     [state.files, entry, customShell],
   );
-  const filesForEngineRef = useRef(filesForEngine);
-  filesForEngineRef.current = filesForEngine;
+
+  // Single "always-latest" prop bag. Read inside the iframe-lifetime
+  // callback so changes to `onPreviewError` / `onMounted` / `iframeRef`
+  // take effect without tearing down the session.
+  const latestRef = useRef({
+    onPreviewError: props.onPreviewError,
+    onMounted: props.onMounted,
+    iframeRef: props.iframeRef,
+    filesForEngine,
+  });
+  latestRef.current = {
+    onPreviewError: props.onPreviewError,
+    onMounted: props.onMounted,
+    iframeRef: props.iframeRef,
+    filesForEngine,
+  };
 
   const showOverlay = props.showPreviewErrorOverlay !== false;
-  const onErrorRef = useRef(props.onPreviewError);
-  onErrorRef.current = props.onPreviewError;
-  const onMountedRef = useRef(props.onMounted);
-  onMountedRef.current = props.onMounted;
-  // Stash the consumer's iframeRef so its identity changes don't churn the
-  // iframe lifecycle below. Forwarding happens inside `setupIframe` so
-  // consumers see the iframe attached at ref-phase timing (before the first
-  // useLayoutEffect), matching the contract of a normal forwarded ref.
-  const iframeRefBox = useRef(props.iframeRef);
-  iframeRefBox.current = props.iframeRef;
 
   // `TransformClient` lives for the entire inner mount, owning the worker
-  // across iframe attach cycles. Created inside `useEffect` (not `useState`
-  // init) so React 18 strict mode's simulated unmount/remount disposes the
-  // first instance cleanly and the remount produces a fresh one — useState
-  // init would only run once, leaving a disposed client in state.
+  // across iframe attach cycles. Constructed inside `useEffect` so React 18
+  // strict mode's simulated unmount/remount disposes the first instance
+  // cleanly; useState-init would only run once, leaving a disposed client
+  // in state on the remount.
   //
-  // `prewarm()` is called immediately so worker.js + swc-wasm download in
-  // parallel with vendor resolution — independent of when `actions.importMap`
-  // lands. Pure side effect on the network; the eventual session's
-  // `transformAll()` reuses the cached `workerReady` promise.
+  // `prewarm()` runs immediately so worker.js + swc-wasm download in
+  // parallel with vendor resolution. `onWorkerError` routes prewarm
+  // failures through the consumer's error sink instead of swallowing them.
   const [client, setClient] = useState<TransformClient | null>(null);
   useEffect(() => {
+    const reportWorkerError = (err: Error): void => {
+      const replErr: ReplError = { kind: 'runtime', message: err.message, stack: err.stack ?? '' };
+      setLastError(replErr);
+      latestRef.current.onPreviewError?.(replErr);
+    };
     const c = new TransformClient({
       ...(swcWasmUrl ? { swcWasmUrl } : {}),
       ...(loader ? { loader } : {}),
       ...(Object.keys(virtualModulesRaw).length > 0 ? { virtualModules: virtualModulesRaw } : {}),
+      onWorkerError: reportWorkerError,
     });
-    void c.prewarm().catch(() => {});
+    void c.prewarm();
     setClient(c);
     return () => {
       c.dispose();
@@ -151,17 +169,11 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Tracks the active iframe session's client for the `syncFiles` effect
-  // below — null between iframe attaches, set during a session. Mirrors the
-  // pre-refactor "syncFiles only fires when an iframe is attached" semantic
-  // by gating on this ref rather than on `filesForEngine`'s deps.
-  const sessionClientRef = useRef<TransformClient | null>(null);
+  // The live session, set inside the iframe ref callback below. The
+  // file-sync effect reads from it to forward edits; the cold-boot path
+  // runs once per attach.
+  const sessionRef = useRef<TransformSession | null>(null);
 
-  // Memoize srcdoc so file edits don't recompute / remount the iframe.
-  // Gated on both `importMap` (needed for the inlined `<script type="importmap">`)
-  // and `client` (the worker that compiles user code once the iframe sends
-  // `ready`). When either is missing we render a placeholder so the iframe
-  // mount + `setupIframe` fire only when there's a real client to attach.
   const srcdoc = useMemo(
     () =>
       importMap === null || client === null
@@ -175,28 +187,24 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
     [importMap, client, props.headHtml, props.bodyHtml, showOverlay],
   );
 
-  // React 19 callback ref with cleanup. Synchronous with iframe mount/unmount —
-  // listener and session are attached at the same time the `<iframe>` enters
-  // the DOM, so there is no window where the iframe could send `ready` before
-  // we're listening for it.
+  // React 19 callback ref with cleanup. Attaches listener + session
+  // synchronously with the iframe mounting; the iframe can't post `ready`
+  // before we're listening.
   const setupIframe = useCallback(
     (iframe: HTMLIFrameElement) => {
-      // The iframe element only renders when both `client` and `importMap`
-      // are non-null (see `srcdoc` memo above), so this guard is defensive —
-      // it can't fire in practice, but it lets TypeScript narrow `client`
-      // for the rest of the callback.
+      // Defensive narrowing for TypeScript — the iframe only renders when
+      // client + importMap are non-null (see srcdoc memo).
       if (!client) return;
-      // Forward to the consumer's iframeRef. Read via the ref box so this
-      // callback's deps don't include `props.iframeRef` (which would tear
-      // down + re-attach the session on every consumer render when an
-      // inline callback ref is used).
-      const userRef = iframeRefBox.current;
+
+      // Forward the consumer's iframeRef. Read via latestRef so changes
+      // don't tear down the session.
+      const userRef = latestRef.current.iframeRef;
       let detachUserRef: (() => void) | undefined;
       if (userRef) {
         if (typeof userRef === 'function') {
           const ret = userRef(iframe);
-          // React 19 callback refs may return a cleanup; prefer it. Otherwise
-          // we manually call the ref with null on detach.
+          // React 19 callback refs may return a cleanup. Fall back to
+          // calling with null on detach when they don't.
           detachUserRef = typeof ret === 'function' ? ret : () => userRef(null);
         } else {
           (userRef as React.MutableRefObject<HTMLIFrameElement | null>).current = iframe;
@@ -206,12 +214,9 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
         }
       }
 
-      // Publish to the provider-shared registry so siblings like
-      // `<InspectMode/>` can find the live iframe.
-      actions.iframeRegistry.setIframe(iframe);
+      iframeRegistry.setIframe(iframe);
 
-      // Per-iframe boot-protocol state. Lives in this callback's closure and
-      // is referenced by the session handlers + message listener.
+      // Per-iframe boot state. Lives in this callback's closure.
       let disposed = false;
       let booted = false;
       let ready = false;
@@ -220,11 +225,8 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
       const collectedCss: { path: string; css: string }[] = [];
 
       const send = (msg: ToIframe) => {
-        if (!ready) {
-          queue.push(msg);
-          return;
-        }
-        iframe.contentWindow?.postMessage({ __repl: true, ...msg }, '*');
+        if (!ready) queue.push(msg);
+        else iframe.contentWindow?.postMessage({ __repl: true, ...msg }, '*');
       };
       const flush = () => {
         const out = queue.splice(0);
@@ -233,40 +235,18 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
 
       const reportError = (err: ReplError) => {
         setLastError(err);
-        onErrorRef.current?.(err);
+        latestRef.current.onPreviewError?.(err);
       };
 
-      const handleClientError = (e: TransformError) => {
-        const err: ReplError =
-          e.kind === 'resolve'
-            ? { kind: 'resolve', path: e.path, specifier: e.specifier ?? '' }
-            : {
-                kind: 'transform',
-                path: e.path,
-                message: e.message,
-                ...(e.loc ? { loc: e.loc } : {}),
-              };
-        reportError(err);
-        if (e.kind === 'resolve') {
-          send({ kind: 'resolve-error', path: e.path, specifier: e.specifier ?? '' });
-        } else {
-          send({
-            kind: 'transform-error',
-            path: e.path,
-            message: e.message,
-            ...(e.loc ? { loc: e.loc } : {}),
-          });
-        }
-      };
-
-      const { detach } = client.attachSession({
+      const session = client.attachSession({
         onModule: (m) => {
           if (!booted) {
             collected.push(m);
           } else {
             send({ kind: 'load', module: m });
-            // a successful module load implicitly clears prior transform errors
-            // for that path; the iframe's overlay updates on the next tick.
+            // A successful module load implicitly clears prior transform
+            // errors for that path; the iframe's overlay updates on the
+            // next tick.
             send({ kind: 'clear-errors' });
           }
         },
@@ -275,34 +255,56 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
           else send({ kind: 'css-upsert', path, css });
         },
         onCssRemove: (path) => send({ kind: 'css-remove', path }),
-        onError: handleClientError,
+        onError: (e: TransformError) => {
+          const err: ReplError =
+            e.kind === 'resolve'
+              ? { kind: 'resolve', path: e.path, specifier: e.specifier ?? '' }
+              : {
+                  kind: 'transform',
+                  path: e.path,
+                  message: e.message,
+                  ...(e.loc ? { loc: e.loc } : {}),
+                };
+          reportError(err);
+          send(
+            e.kind === 'resolve'
+              ? { kind: 'resolve-error', path: e.path, specifier: e.specifier ?? '' }
+              : {
+                  kind: 'transform-error',
+                  path: e.path,
+                  message: e.message,
+                  ...(e.loc ? { loc: e.loc } : {}),
+                },
+          );
+        },
       });
-      sessionClientRef.current = client;
+      sessionRef.current = session;
 
       const onMessage = async (event: MessageEvent) => {
         const data = event.data;
         if (!data || data.__repl !== true) return;
-        // Security invariant: only accept messages from this iframe's window.
-        // Without this check any other frame could spoof `__repl` envelopes.
+        // Security invariant: reject any frame other than this iframe's
+        // window. Without this any other frame could spoof `__repl`
+        // envelopes.
         if (event.source !== iframe.contentWindow) return;
         const msg = data as FromIframe & { __repl: true };
         if (msg.kind === 'ready') {
           ready = true;
-          // cold boot: transform everything and send one boot message.
           try {
-            // record current files without scheduling per-file transforms;
-            // transformAll() does the work in topological order.
-            client.setFiles(filesForEngineRef.current);
-            await client.transformAll();
+            await session.setFiles(latestRef.current.filesForEngine);
             if (disposed) return;
             booted = true;
+            // Batch the cold-boot output into a single message — keeps the
+            // dep graph already topo-ordered (the session emits in order)
+            // and avoids interleaving with whatever the iframe queues up
+            // for its first tick.
             iframe.contentWindow?.postMessage(
               {
                 __repl: true,
                 kind: 'boot',
-                // The runtime entry is always the synthetic shell — never the
-                // user-facing entry. The shell imports the latter (or whatever
-                // a custom shell composes) and is what `root.render(...)` mounts.
+                // The runtime entry is always the synthetic shell — never
+                // the user-facing entry. The shell imports the latter and
+                // is what `root.render(...)` mounts.
                 entry: SHELL_PATH,
                 modules: collected.slice(),
                 cssFiles: collectedCss.slice(),
@@ -318,7 +320,7 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
             });
           }
         } else if (msg.kind === 'mounted') {
-          onMountedRef.current?.();
+          latestRef.current.onMounted?.();
         } else if (msg.kind === 'runtime-error') {
           reportError({ kind: 'runtime', message: msg.message, stack: msg.stack });
         }
@@ -328,30 +330,36 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
       return () => {
         disposed = true;
         window.removeEventListener('message', onMessage);
-        detach();
-        if (sessionClientRef.current === client) sessionClientRef.current = null;
-        actions.iframeRegistry.setIframe(null);
+        session.detach();
+        if (sessionRef.current === session) sessionRef.current = null;
+        iframeRegistry.setIframe(null);
         detachUserRef?.();
       };
     },
-    [client, actions.iframeRegistry, setLastError],
+    [client, iframeRegistry, setLastError],
   );
 
-  // Forward file changes into the live transform client. Gated on
-  // `sessionClientRef` so pre-iframe-mount edits (no session attached yet)
-  // are dropped — the eventual session's cold-boot path picks up the
-  // latest `filesForEngine` via `filesForEngineRef` instead.
+  // Forward file changes into the live session. The initial value is *not*
+  // forwarded here — the iframe's `ready` handler is the single cold-boot
+  // trigger; firing setFiles() here would race it and defeat the batched
+  // `boot` message. Pre-iframe-mount edits still fall through (no session
+  // attached); the cold-boot path picks up the latest `filesForEngine` via
+  // `latestRef` when `ready` arrives.
+  const initialFilesRef = useRef(filesForEngine);
   useEffect(() => {
-    sessionClientRef.current?.syncFiles(filesForEngine);
+    if (filesForEngine === initialFilesRef.current) return;
+    void sessionRef.current?.setFiles(filesForEngine);
   }, [filesForEngine]);
+
+  const sandbox = props.unsafeDropSandbox ? undefined : (props.sandbox ?? DEFAULT_SANDBOX);
 
   return (
     <div className={`repl-preview ${props.className ?? ''}`} style={props.style}>
       {srcdoc === null ? (
-        // ImportMap still pending. Render a same-shape placeholder so layout
-        // doesn't shift when the iframe lands. Uses a distinct class from the
-        // real iframe so `page.frameLocator('.repl-iframe')` doesn't latch
-        // onto the placeholder during the importMap-pending window.
+        // ImportMap still pending. Same-shape placeholder so layout doesn't
+        // shift on iframe mount. A distinct class — `page.frameLocator
+        // ('.repl-iframe')` would otherwise latch onto this during the
+        // pending window and never resolve a real contentFrame.
         <div
           className="repl-iframe-placeholder"
           aria-busy="true"
@@ -363,11 +371,7 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
           className="repl-iframe"
           srcDoc={srcdoc}
           title="preview"
-          // `sandbox === null` is the explicit opt-out: react omits the
-          // attribute and the iframe inherits the embedder's origin.
-          sandbox={
-            props.sandbox === null ? undefined : (props.sandbox ?? 'allow-scripts allow-forms')
-          }
+          {...(sandbox !== undefined ? { sandbox } : {})}
           allow={props.allow ?? ''}
           referrerPolicy={props.referrerPolicy ?? 'no-referrer'}
           // Inline so the iframe fills its container and drops the default

@@ -2,9 +2,10 @@
  * Hook for reading the file table and CRUD actions from the surrounding
  * {@link ReplProvider}.
  *
- * Re-renders whenever the parent's `files` prop changes. Action functions
- * are stable across renders (memoized in the provider) — safe to put in
- * `useEffect` / `useCallback` deps.
+ * Re-renders on file / activePath changes only — error state lives behind
+ * `useReplError` so file-editing UIs don't churn on transient errors.
+ * Action functions are stable across renders (memoized in the provider) —
+ * safe to put in `useEffect` / `useCallback` deps.
  *
  * @example
  * ```ts

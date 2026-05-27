@@ -29,10 +29,9 @@ export type InspectModeProps = {
    */
   onCancel?: () => void;
   /**
-   * Override classes for the hover overlay. The default styling (blue
-   * border + tinted fill, fixed position, top-most z-index) is applied
-   * unless this prop is set. Set to empty string to disable styling
-   * entirely.
+   * Override class for the hover overlay. The default styling (blue tinted
+   * shadow, fixed position, top layer) is applied unless this prop is set.
+   * Pass an empty string to disable styling entirely.
    */
   overlayClassName?: string;
 };
@@ -63,25 +62,25 @@ export function InspectMode(props: InspectModeProps): React.ReactElement | null 
 
   const { iframeRegistry } = actions;
   const { active, onElementPicked, onCancel, overlayClassName } = props;
+  // The registry's `subscribe` fires synchronously with the current value,
+  // so we don't need a useState seed beyond `null` — but seeding from
+  // `getIframe()` lets the first render skip the no-iframe branch when the
+  // preview is already mounted.
   const [iframe, setIframe] = useState<HTMLIFrameElement | null>(() => iframeRegistry.getIframe());
-
-  // Subscribe to iframe lifecycle. The registry calls back synchronously on
-  // subscribe with the current value, so we don't need a separate seed.
   useEffect(() => iframeRegistry.subscribe(setIframe), [iframeRegistry]);
 
-  // Toggle the picker by posting to the iframe whenever `active` flips.
-  // First activation also installs the picker bundle via the runtime's
-  // `inspect:install` channel (postMessage + blob-URL import); subsequent
-  // toggles are pure `inspect:enable` / `inspect:disable` posts. The
-  // disable on cleanup also fires on unmount and when the iframe element
-  // identity changes (post-reloadPreview), so the picker never lingers.
+  // Toggle the picker via postMessage when `active` flips. First activation
+  // also runs `ensurePickerInstalled` (the runtime dynamic-imports the
+  // picker bundle from a blob URL); subsequent toggles are pure enable/
+  // disable posts. `AbortController` cancels the install promise if the
+  // effect tears down (active flipped off, iframe re-mounted) before the
+  // picker has acknowledged.
   useEffect(() => {
     if (!active || !iframe) return undefined;
-    let cancelled = false;
+    const controller = new AbortController();
 
-    void (async () => {
-      const ok = await ensurePickerInstalled(iframe);
-      if (cancelled || !ok) return;
+    ensurePickerInstalled(iframe).then((ok) => {
+      if (controller.signal.aborted || !ok) return;
       iframe.contentWindow?.postMessage(
         {
           __repl: true,
@@ -90,17 +89,17 @@ export function InspectMode(props: InspectModeProps): React.ReactElement | null 
         },
         '*',
       );
-    })();
+    });
 
     return () => {
-      cancelled = true;
+      controller.abort();
       iframe.contentWindow?.postMessage({ __repl: true, kind: 'inspect:disable' }, '*');
     };
   }, [active, iframe, overlayClassName]);
 
-  // Listen for picks and cancels from the iframe. Filtered by `event.source`
-  // so a stale message from a previous iframe (post-reloadPreview) can't
-  // sneak in after the new one boots.
+  // Pick / cancel messages from the iframe. The `event.source` check stops
+  // a stale message from a pre-reload iframe from leaking into a newer
+  // session.
   useEffect(() => {
     function onMessage(event: MessageEvent) {
       const data = event.data as { __repl?: unknown; kind?: unknown; pick?: ElementPick } | null;
@@ -116,4 +115,6 @@ export function InspectMode(props: InspectModeProps): React.ReactElement | null 
   return null;
 }
 
+// Default export pairs with the named one for lazy imports e.g.:
+// `React.lazy(() => import('mini-react-repl/inspect'))`
 export default InspectMode;

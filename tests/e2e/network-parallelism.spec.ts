@@ -1,12 +1,13 @@
 /**
  * Guard against the boot-path waterfall that motivated the 0.16.0 refactor.
  *
- * The four engine assets — `data-types-*.js`, `data-import-map-*.js`,
- * `worker.js`, and `wasm_bg.wasm` — must all start downloading at
- * `<ReplPreview/>` mount, not chain on each other. Without slowdown, dev
- * responses complete in <1ms and the ordering is invisible; we add a fixed
- * per-URL delay via `page.route()` so a "starts before the other finishes"
- * assertion is meaningful.
+ * The four engine assets — `types-*.js` (types JSON chunk),
+ * `import-map-*.js` (import-map JSON chunk), `worker.js`, and
+ * `wasm_bg.wasm` — must all start downloading at `<ReplPreview/>` mount,
+ * not chain on each other. Without slowdown, dev responses complete in
+ * <1ms and the ordering is invisible; we add a fixed per-URL delay via
+ * `page.route()` so a "starts before the other finishes" assertion is
+ * meaningful.
  *
  * Two scenarios:
  *   1. sync vendor (`?test`) — all four overlap.
@@ -36,8 +37,11 @@ function classify(url: string): Kind | null {
   // probe is what `import swcWasmUrl from '...?url'` resolves to. We only
   // want the worker's actual `fetch(wasmUrl)` call, which has no query.
   if (url.includes('wasm_bg.wasm') && !url.includes('?import')) return 'wasm';
-  if (url.includes('data-types')) return 'types';
-  if (url.includes('data-import-map')) return 'importMap';
+  // The default-vendor chunks emitted by tsup look like `types-XYZ.js` and
+  // `import-map-XYZ.js`. Match the leading segment plus the `-` separator
+  // so user filenames containing `types` don't accidentally trigger.
+  if (/\/types-[A-Z0-9]+\.js(\?.*)?$/i.test(url)) return 'types';
+  if (/\/import-map-[A-Z0-9]+\.js(\?.*)?$/i.test(url)) return 'importMap';
   if (/\/dist\/worker(\.[a-z0-9]+)?\.js(\?.*)?$/i.test(url)) return 'worker';
   return null;
 }
@@ -118,9 +122,7 @@ test.describe('boot assets load in parallel, not in a waterfall', () => {
   // whole boot takes longer than the default 30s per-test budget.
   test.setTimeout(90_000);
 
-  test('sync vendor: data-types, data-import-map, worker.js, wasm all overlap', async ({
-    page,
-  }) => {
+  test('sync vendor: types, import-map, worker.js, wasm all overlap', async ({ page }) => {
     await delayBootAssets(page);
     const captures = trackBootRequests(page);
 
@@ -157,9 +159,9 @@ test.describe('boot assets load in parallel, not in a waterfall', () => {
     // vendor chunks. Margin = importMap.delay - worker.delay - wasm.delay.
     expect(
       wasm.requestedAt,
-      'wasm must start before data-import-map finishes (only worker.js is a real dep)',
+      'wasm must start before import-map chunk finishes (only worker.js is a real dep)',
     ).toBeLessThan(importMap.finishedAt - SLACK_MS);
-    expect(wasm.requestedAt, 'wasm must start before data-types finishes').toBeLessThan(
+    expect(wasm.requestedAt, 'wasm must start before types chunk finishes').toBeLessThan(
       types.finishedAt - SLACK_MS,
     );
 
@@ -189,11 +191,11 @@ test.describe('boot assets load in parallel, not in a waterfall', () => {
     // pending promise, so they must NOT have been requested yet.
     expect(
       captures.get('types'),
-      'data-types must not load while vendor promise is pending',
+      'types chunk must not load while vendor promise is pending',
     ).toBeUndefined();
     expect(
       captures.get('importMap'),
-      'data-import-map must not load while vendor promise is pending',
+      'import-map chunk must not load while vendor promise is pending',
     ).toBeUndefined();
 
     // Resolve and let the full boot complete — proves the rest still wires

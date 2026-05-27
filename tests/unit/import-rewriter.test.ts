@@ -15,7 +15,6 @@ describe('import-rewriter', () => {
     const code = `import { format } from 'date-fns'\nformat(new Date())\n`;
     const r = rewriteImports('App.tsx', code, { 'App.tsx': '' });
     expect(r.code).toContain(`from 'date-fns'`);
-    expect(r.bareSpecifiers).toContain('date-fns');
     expect(r.deps).toEqual([]);
   });
 
@@ -46,7 +45,6 @@ describe('import-rewriter', () => {
     const aliases = new Set(['@foo/bar']);
     const r = rewriteImports('App.tsx', code, { 'App.tsx': '' }, aliases);
     expect(r.deps).toEqual([{ specifier: '@foo/bar', target: VIRTUAL_KEY_PREFIX + '@foo/bar' }]);
-    expect(r.bareSpecifiers).toEqual([]);
     // The literal `'@foo/bar'` must remain so the iframe runtime's
     // string-replace pass can substitute it for the blob URL.
     expect(r.code).toContain(`'@foo/bar'`);
@@ -56,7 +54,7 @@ describe('import-rewriter', () => {
     const code = `import { greet } from '@foo/bar'\n`;
     const r = rewriteImports('App.tsx', code, { 'App.tsx': '' });
     expect(r.deps).toEqual([]);
-    expect(r.bareSpecifiers).toContain('@foo/bar');
+    expect(r.code).toContain(`from '@foo/bar'`);
   });
 
   it('records virtual aliases for dynamic imports', () => {
@@ -64,7 +62,6 @@ describe('import-rewriter', () => {
     const aliases = new Set(['@foo/bar']);
     const r = rewriteImports('App.tsx', code, { 'App.tsx': '' }, aliases);
     expect(r.deps).toEqual([{ specifier: '@foo/bar', target: VIRTUAL_KEY_PREFIX + '@foo/bar' }]);
-    expect(r.bareSpecifiers).toEqual([]);
     expect(r.code).toContain(`'@foo/bar'`);
   });
 

@@ -6,12 +6,28 @@
  */
 
 /**
+ * A value that may arrive synchronously, via a Promise, or lazily through
+ * a thunk — the shape `mini-react-repl` accepts wherever vendor payloads
+ * can be code-split into their own chunk.
+ *
+ * The `{ default: T }` branch tolerates the result of a JSON-import
+ * (`import('./bundle.json')`) without forcing consumers to unwrap. The
+ * thunk form is what `repl-vendor-build` emits by default so the bundler
+ * splits the data into its own chunk; the library invokes it once on
+ * mount.
+ */
+export type Resolvable<T> = T | PromiseLike<T | { default: T }> | (() => Resolvable<T>);
+
+/**
  * A standard import-map plus an optional `.d.ts` payload.
  *
  * `importMap` matches the W3C Import Maps shape exactly. Every entry must be
  * a URL the browser can fetch from a sandboxed iframe; in practice that
  * means `data:` URLs (what `repl-vendor-build` produces) or fully-qualified
  * `https://` URLs with permissive CORS headers.
+ *
+ * Both `importMap` and `types` accept any {@link Resolvable} shape so
+ * consumers can code-split the payloads without ceremony.
  *
  * @see https://github.com/WICG/import-maps
  */
@@ -20,39 +36,20 @@ export type VendorBundle = {
    * Standard import-map JSON:
    * `{ imports: { 'react': 'data:text/javascript;base64,...' } }`.
    *
-   * Accepts:
-   * - a sync `ImportMap`,
-   * - a `Promise<ImportMap>` or JSON-import result (`{ default: ImportMap }`),
-   * - or a **function** returning either of the above — invoked once on
-   *   `<Repl/>` mount so the bundler code-splits the import-map data into
-   *   its own chunk. Routes that never mount `<Repl/>` don't pay for it.
-   *
-   * The library waits for this to resolve before booting the iframe (the
-   * browser needs `<script type="importmap">` inlined in the srcdoc before
-   * any module script that imports a bare specifier can run).
+   * The iframe boot blocks on this resolving — the browser needs
+   * `<script type="importmap">` inlined in the srcdoc before any module
+   * script that imports a bare specifier can run.
    */
-  importMap:
-    | ImportMap
-    | PromiseLike<ImportMap | { default: ImportMap }>
-    | (() => ImportMap | PromiseLike<ImportMap | { default: ImportMap }>);
+  importMap: Resolvable<ImportMap>;
   /**
    * Optional `.d.ts` payload paired with the vendor's runtime modules.
    * Editors that support it (e.g. {@link https://www.npmjs.com/package/monaco-editor | Monaco})
    * consume this to provide red squiggles and hover signatures for the
-   * vendor packages. Editors that don't support it ignore the field.
-   *
-   * Accepts:
-   * - a sync `TypeBundle`,
-   * - a `Promise<TypeBundle>` or JSON-import result (`{ default: TypeBundle }`),
-   * - or a **function** returning either of the above — invoked lazily by
-   *   the library when an editor adapter actually mounts. Preview-only
-   *   consumers never trigger it. The default vendor uses this form so the
-   *   `.d.ts` chunk only downloads when the editor needs it.
+   * vendor packages. The thunk form is the cheapest: the library only
+   * invokes it once an editor adapter actually mounts, so preview-only
+   * consumers never download the chunk.
    */
-  types?:
-    | TypeBundle
-    | PromiseLike<TypeBundle | { default: TypeBundle }>
-    | (() => TypeBundle | PromiseLike<TypeBundle | { default: TypeBundle }>);
+  types?: Resolvable<TypeBundle>;
 };
 
 /**

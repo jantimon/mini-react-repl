@@ -17,9 +17,9 @@ export default defineConfig({
     // Browser-targeted default export
     'vendor-default/index': 'src/vendor-default/index.ts',
     'vendor-base': 'src/vendor-base.ts',
-    'vendor-builder/build': 'src/vendor-builder/build.ts',
     'vendor-builder/cli': 'src/vendor-builder/cli.ts',
     'preview-html': 'src/preview-html.ts',
+    loader: 'src/loader.ts',
   },
   format: ['esm'],
   target: 'es2022',
