@@ -4,9 +4,10 @@
  * blob URLs at load time.
  *
  * Why we don't substitute blob URLs here: parent-created blob URLs
- * don't load reliably in srcdoc iframes (Chromium scopes the URL to
- * the creating document). Instead, the parent reports the dependency
- * list and the iframe rewrites + creates blobs in its own context.
+ * don't load reliably across the iframe's opaque sandbox origin
+ * (Chromium scopes the URL to its creating realm). Instead, the parent
+ * reports the dependency list and the iframe rewrites + creates blobs
+ * in its own context.
  *
  * Uses `es-module-lexer` instead of a full parse: swc has already
  * verified the syntax, we only need to find import specifier ranges.

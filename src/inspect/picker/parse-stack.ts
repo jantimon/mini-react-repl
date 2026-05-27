@@ -67,8 +67,10 @@ function parseLine(line: string): ParsedFrame | null {
 
 /**
  * Schemes we never look up against a source map: vendor/framework URLs
- * (no inline map points at user `.tsx`), and `about:srcdoc` for the
- * iframe HTML itself.
+ * (no inline map points at user `.tsx`), `blob:` URLs (the preview
+ * document, plus module blobs minted inside the iframe), and
+ * `about:srcdoc` (kept for back-compat with older frames; the iframe
+ * document loads from `blob:` today).
  */
 const NON_SOURCE_SCHEME =
   /^(?:https?|blob|data|file|chrome-extension|moz-extension|webpack|about):/i;
@@ -76,7 +78,7 @@ const NON_SOURCE_SCHEME =
 /**
  * `true` if this frame's `fileName` is a candidate for source-map lookup
  * (i.e. a `//# sourceURL` pragma value, like `App.tsx`). Vendor / blob /
- * about:srcdoc frames return `false`.
+ * about: frames return `false`.
  */
 export function isSourceCandidate(frame: ParsedFrame): boolean {
   if (!frame.fileName) return false;

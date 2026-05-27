@@ -2,6 +2,29 @@
 
 All notable changes to `mini-react-repl`. Dates are YYYY-MM-DD.
 
+## 0.18.0 — 2026-05-27
+
+### Changed
+
+- **Preview iframe is now loaded via a `blob:` URL instead of `srcdoc`.**
+  The HTML is identical; only the delivery mechanism changes. DevTools
+  shows `src="blob:https://…/uuid"` instead of inlining the full preview
+  document on the iframe element, which makes the Elements panel
+  readable and the URL navigable. Anyone who was reading
+  `iframe.srcdoc` from tests or tooling should switch to fetching the
+  blob URL or reading `iframe.contentDocument` (only available under
+  `unsafeDropSandbox`). Sandbox / origin behaviour is unchanged in both
+  the default and `unsafeDropSandbox` modes.
+- **`iframeRef` and `onMounted` fire on every preview soft reload,**
+  not just on first mount. When the consumer changes `headHtml` /
+  `bodyHtml` / `showPreviewErrorOverlay`, the iframe's `contentWindow`
+  is replaced — but previously no callback fired, so any host state
+  `postMessage`-ed into the iframe was silently dropped. The ref now
+  cycles `null → element` so consumers can re-send. The DOM element
+  identity is preserved across the cycle; only `contentWindow` turns
+  over. Boot config (`vendor`, `swcWasmUrl`, `loader`,
+  `virtualModules`) is unaffected.
+
 ## 0.17.0 — 2026-05-27
 
 ### Changed (breaking)

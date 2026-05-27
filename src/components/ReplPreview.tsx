@@ -1,16 +1,23 @@
 /**
  * Renders the preview iframe and owns the transform pipeline.
  *
- * The srcdoc is generated once per (vendor / headHtml / bodyHtml) inputs and
- * stays constant across file edits. File edits flow through `postMessage`
- * to the already-mounted iframe.
+ * The preview HTML is generated once per (vendor / headHtml / bodyHtml)
+ * inputs, packed into a `blob:` URL, and assigned to `iframe.src` — DevTools
+ * shows a short `blob:` URL instead of the full document. File edits flow
+ * through `postMessage` to the already-mounted iframe.
  *
  * Lifecycle:
  *   1. mount → construct `TransformClient` (worker prewarms in parallel)
- *   2. import map lands → srcdoc is computed and the iframe mounts
+ *   2. import map lands → preview HTML is computed, wrapped in a Blob, and
+ *      `iframe.src` is set to its `blob:` URL inside the iframe ref callback
  *   3. iframe runtime sends `ready` → session is attached and cold-boot fires
  *   4. cold boot finishes → single `boot` message sent with every module + CSS
  *   5. subsequent file changes flow through `session.setFiles(next)`
+ *
+ * Soft reloads (`headHtml` / `bodyHtml` / `showPreviewErrorOverlay` change):
+ * the ref callback re-runs — old blob URL is revoked, session is detached,
+ * a fresh blob URL + session attach drives a clean cold-boot. The worker
+ * and `TransformClient` survive across soft reloads.
  *
  * @public
  */
@@ -49,6 +56,13 @@ export type ReplPreviewProps = {
    * `onMounted` to `postMessage` host-computed data into the iframe.
    * Messages with `{ __repl: true, ... }` are reserved for the runtime
    * protocol — pick a different shape for your own.
+   *
+   * Fires once per preview document lifetime — including soft reloads
+   * triggered by changes to `headHtml` / `bodyHtml` /
+   * `showPreviewErrorOverlay`. The DOM element identity is preserved
+   * across soft reloads, but the iframe's `contentWindow` is replaced and
+   * any host state you `postMessage`-ed in is gone — re-send it from
+   * `onMounted` or from your callback ref on each attach.
    */
   iframeRef?: React.Ref<HTMLIFrameElement>;
   /**
@@ -190,11 +204,22 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
   // React 19 callback ref with cleanup. Attaches listener + session
   // synchronously with the iframe mounting; the iframe can't post `ready`
   // before we're listening.
+  //
+  // `srcdoc` is in the dep list so head/body/overlay changes re-run this
+  // callback (revoke old blob URL, detach session, then fresh setup). The
+  // DOM element identity is preserved across the cycle — only this
+  // callback's state turns over.
   const setupIframe = useCallback(
     (iframe: HTMLIFrameElement) => {
       // Defensive narrowing for TypeScript — the iframe only renders when
-      // client + importMap are non-null (see srcdoc memo).
-      if (!client) return;
+      // client + srcdoc are non-null (see srcdoc memo / JSX guard).
+      if (!client || srcdoc === null) return;
+
+      // Mint a fresh blob URL for this attach. Revoked in the cleanup
+      // below — single-lifecycle ownership keeps this leak-free even
+      // under React strict mode's mount/unmount/mount cycle.
+      const blobUrl = URL.createObjectURL(new Blob([srcdoc], { type: 'text/html' }));
+      iframe.src = blobUrl;
 
       // Forward the consumer's iframeRef. Read via latestRef so changes
       // don't tear down the session.
@@ -334,9 +359,10 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
         if (sessionRef.current === session) sessionRef.current = null;
         iframeRegistry.setIframe(null);
         detachUserRef?.();
+        URL.revokeObjectURL(blobUrl);
       };
     },
-    [client, iframeRegistry, setLastError],
+    [client, srcdoc, iframeRegistry, setLastError],
   );
 
   // Forward file changes into the live session. The initial value is *not*
@@ -369,7 +395,6 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
         <iframe
           ref={setupIframe}
           className="repl-iframe"
-          srcDoc={srcdoc}
           title="preview"
           {...(sandbox !== undefined ? { sandbox } : {})}
           allow={props.allow ?? ''}

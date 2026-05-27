@@ -11,9 +11,11 @@
  *     a non-null `TransformSession`, so every emission point has a real sink
  *     — no defensive null-checks, no silently swallowed errors.
  *
- * Blob URLs are not owned here. The iframe creates and revokes them inside
- * its own context — parent-created blob URLs don't load reliably under
- * srcdoc.
+ * Blob URLs for module bodies are not owned here. The iframe creates
+ * and revokes them inside its own context — parent-created blob URLs
+ * don't load reliably across the iframe's opaque sandbox origin. The
+ * `blob:` URL for the iframe document itself is owned by
+ * `<ReplPreview/>` (one URL per iframe attach, revoked on detach).
  *
  * @internal
  */

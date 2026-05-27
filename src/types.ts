@@ -37,8 +37,8 @@ export type VendorBundle = {
    * `{ imports: { 'react': 'data:text/javascript;base64,...' } }`.
    *
    * The iframe boot blocks on this resolving — the browser needs
-   * `<script type="importmap">` inlined in the srcdoc before any module
-   * script that imports a bare specifier can run.
+   * `<script type="importmap">` inlined in the preview document before
+   * any module script that imports a bare specifier can run.
    */
   importMap: Resolvable<ImportMap>;
   /**

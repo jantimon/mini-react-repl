@@ -215,7 +215,7 @@ export function renderIndexTs(opts: { hasTypes: boolean; exportName: string }): 
 //   importMap resolved ◄──────────────────┘
 //          │
 //          ▼
-//   iframe srcdoc written (importmap inlined)
+//   preview document built + blob: URL assigned to iframe.src
 //          │
 //          ▼
 //   iframe fetches swc.wasm (parallel with types.json if still in flight)

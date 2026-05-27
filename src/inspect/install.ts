@@ -18,9 +18,10 @@ import { INSPECT_PICKER_CODE } from './picker.bundled.ts';
 
 const INSTALL_TIMEOUT_MS = 5_000;
 
-// Keyed by the iframe's `Window` object — when the srcdoc reloads,
-// `contentWindow` is a fresh object, so the next call re-installs
-// automatically. Memoized as Promise to dedup concurrent calls.
+// Keyed by the iframe's `Window` object — when the preview document
+// reloads, `contentWindow` is a fresh object, so the next call
+// re-installs automatically. Memoized as Promise to dedup concurrent
+// calls.
 const installed = new WeakMap<Window, Promise<boolean>>();
 
 /**

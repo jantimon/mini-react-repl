@@ -1,6 +1,6 @@
 /**
  * Iframe runtime. Loaded once per iframe mount as an inline ESM module
- * inside `preview.html` (srcdoc). Owns:
+ * inside the preview document (delivered as a `blob:` URL). Owns:
  *
  *   - the logical-path module registry (`window.__repl__.modules`)
  *   - React Refresh wiring
@@ -145,8 +145,8 @@ let pickerInstalled = false;
 /**
  * Build the wrapped, import-rewritten module body and turn it into a
  * blob URL inside this iframe's context. Parent-created blob URLs do
- * not load reliably under srcdoc — we keep the whole blob registry on
- * this side.
+ * not load reliably across the opaque sandbox origin — we keep the
+ * whole blob registry on this side.
  */
 function buildBlobUrl(payload: ModulePayload): string {
   let code = payload.code;
@@ -206,8 +206,9 @@ async function mountEntry(blobUrl: string, path: string): Promise<void> {
 
 async function loadModule(payload: ModulePayload): Promise<void> {
   // Build a fresh blob URL inside this iframe (parent-created URLs don't
-  // load under srcdoc). Refresh's path-keyed registry is what gives us
-  // stable module identity across edits, not the URL.
+  // load across the opaque sandbox origin). Refresh's path-keyed
+  // registry is what gives us stable module identity across edits, not
+  // the URL.
   const rec = ensureRecord(payload.path);
   const prevUrl = rec.blobUrl;
   const newUrl = buildBlobUrl(payload);

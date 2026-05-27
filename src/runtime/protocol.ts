@@ -8,7 +8,8 @@
 /**
  * A transformed module sent across the postMessage boundary as raw source.
  * The iframe creates the blob URL inside its own context (parent-created
- * blob URLs don't load reliably in srcdoc iframes — Chromium scopes them).
+ * blob URLs don't load reliably across the iframe's opaque sandbox
+ * origin — Chromium scopes them to their creating realm).
  */
 export type ModulePayload = {
   /** Logical path (e.g. `'App.tsx'`). */

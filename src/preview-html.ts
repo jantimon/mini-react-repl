@@ -1,5 +1,6 @@
 /**
- * Generates the srcdoc HTML for the preview iframe.
+ * Generates the preview document HTML loaded into the iframe (via a
+ * `blob:` URL minted in `<ReplPreview/>`).
  *
  * The output is a self-contained document that:
  *   - declares the import map (so `import 'react'` works in user code)
@@ -36,7 +37,9 @@ export type PreviewHtmlOptions = {
 };
 
 /**
- * Build the iframe srcdoc string from the given options.
+ * Build the preview document HTML string from the given options. The
+ * caller wraps this in a Blob and assigns the resulting `blob:` URL to
+ * the iframe's `src`.
  *
  * Idempotent and pure — same options produce the same string. Cheap enough
  * to call inside React render, but `<ReplPreview/>` memoizes anyway.

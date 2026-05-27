@@ -52,6 +52,16 @@ test.describe('iframe sandbox', () => {
     );
   });
 
+  test('preview document is delivered via blob: URL, not srcdoc', async ({ page }) => {
+    await gotoDemo(page);
+    await expect(preview(page).locator('h1')).toContainText(/Today is/i, { timeout: 30_000 });
+
+    const iframe = page.locator('iframe.repl-iframe');
+    await expect(iframe).toHaveAttribute('src', /^blob:/);
+    // srcdoc is omitted entirely (vs. being present and empty)
+    expect(await iframe.getAttribute('srcdoc')).toBeNull();
+  });
+
   test('user code cannot mutate window.parent.document', async ({ page }) => {
     await gotoDemo(page);
     await expect(preview(page).locator('h1')).toContainText(/Today is/i, { timeout: 30_000 });

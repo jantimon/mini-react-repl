@@ -88,9 +88,14 @@ test.describe('mini-react-repl/inspect', () => {
     await expect(h1).toContainText(/Today is/i, { timeout: 30_000 });
 
     const readOverlay = async () => {
-      const ov = preview(page).locator('[data-repl-inspect-overlay]');
-      if ((await ov.count()) === 0) return null;
-      return ov.evaluate((el) => {
+      // Two overlays can briefly coexist after a re-activation: the old one
+      // is fading out (overlay.ts schedules its removal after FADE_MS) while
+      // a fresh element has already been appended. The test cares about the
+      // fresh one — `.last()` reads it deterministically without racing the
+      // fade-out timer.
+      const all = preview(page).locator('[data-repl-inspect-overlay]');
+      if ((await all.count()) === 0) return null;
+      return all.last().evaluate((el) => {
         const e = el as HTMLElement;
         const cs = getComputedStyle(e);
         return {

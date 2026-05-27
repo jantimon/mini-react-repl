@@ -4,9 +4,9 @@
  * script, React's initialization sees the hook and wires up.
  *
  * This is shipped as a SEPARATE `<script type="module">` tag in the
- * iframe srcdoc, scheduled BEFORE the main runtime bundle. The browser
- * fully evaluates each module script in document order before starting
- * the next.
+ * preview document, scheduled BEFORE the main runtime bundle. The
+ * browser fully evaluates each module script in document order before
+ * starting the next.
  *
  * @internal
  */

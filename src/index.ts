@@ -10,7 +10,7 @@
  *   - `mini-react-repl/loader`         — `defaultLoader` for custom loaders
  *   - `mini-react-repl/vendor-default` — curated default vendor bundle
  *   - `mini-react-repl/vendor-base`    — required-core re-export for custom vendors
- *   - `mini-react-repl/preview-html`   — srcdoc generator (advanced)
+ *   - `mini-react-repl/preview-html`   — preview-document HTML generator (advanced)
  *   - `mini-react-repl/theme.css`      — optional default styling
  *
  * The `repl-vendor-build` CLI (shipped as a `bin`) is the supported way to
