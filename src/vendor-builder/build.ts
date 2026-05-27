@@ -34,7 +34,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { resolve, join, dirname, relative } from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import type { ImportMap, TypeBundle, VendorBundle } from '../types.ts';
+import type { ImportMap, TypeBundle } from '../types.ts';
 
 /**
  * Specifiers the iframe runtime hard-imports through the import map. Missing
@@ -105,8 +105,20 @@ export type BuildOptions = {
 
 type ManifestEntry = { key: string; specifier: string };
 
-/** Build a vendor bundle. Returns the {@link VendorBundle} the consumer passes to `<Repl/>`. */
-export async function build(options: BuildOptions): Promise<VendorBundle> {
+/**
+ * Result of {@link build}: the fully-resolved (sync) data leaves. The CLI
+ * serializes these to disk and a thin generated `index.ts` wraps them in
+ * lazy thunks; programmatic callers can pass `{ importMap, types }` straight
+ * into a `<ReplProvider vendor={...}/>` since `VendorBundle.importMap`
+ * accepts a sync `ImportMap`.
+ */
+export type BuildResult = {
+  importMap: ImportMap;
+  types?: TypeBundle;
+};
+
+/** Build a vendor bundle. Returns the {@link BuildResult} the CLI serializes (or you pass into `<Repl vendor={...} />` programmatically). */
+export async function build(options: BuildOptions): Promise<BuildResult> {
   const nodeEnv = options.nodeEnv ?? 'development';
   const cwd = options.cwd ?? process.cwd();
   const wantTypes = options.types === 'embed';

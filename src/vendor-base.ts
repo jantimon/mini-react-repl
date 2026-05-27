@@ -1,17 +1,20 @@
 /**
  * Manifest of the iframe-runtime required core. Re-export from your own
- * `vendor.ts` to satisfy the import-map keys the in-iframe runtime + every
- * SWC-transformed JSX file hard-import:
+ * `vendor.entry.ts` to satisfy the import-map keys the in-iframe runtime
+ * + every SWC-transformed JSX file hard-import:
  *
  * ```ts
- * // vendor.ts
+ * // vendor.entry.ts
  * export * from 'mini-react-repl/vendor-base';
  *
  * import * as zod from 'zod';
  * export { zod };
  * ```
  *
- * Then `repl-vendor-build vendor.ts --out public/vendor --bundle-out src/vendor/repl.vendor.json`.
+ * Then `repl-vendor-build src/sandbox/vendor.entry.ts` — produces the
+ * sibling `vendor.generated/` folder, whose `index.ts` re-exports
+ * `customVendor: VendorBundle` with the import map and types both wired
+ * as lazy chunks. See `examples/custom-vendor`.
  *
  * @public
  */

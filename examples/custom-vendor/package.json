@@ -7,7 +7,7 @@
     "dev": "pnpm run build:vendor && vite",
     "build": "pnpm run build:vendor && vite build",
     "preview": "vite preview",
-    "build:vendor": "repl-vendor-build src/vendor/vendor.ts --out src/vendor/repl.vendor.json",
+    "build:vendor": "repl-vendor-build src/vendor.entry.ts",
     "postinstall": "pnpm run build:vendor || true"
   },
   "dependencies": {

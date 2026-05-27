@@ -38,7 +38,7 @@ export default function Playground() {
 }
 ```
 
-That's the whole thing. Editor + live preview, multi-file, real React Fast
+That's the whole thing. Editor + secure live preview, multi-file, real React Fast
 Refresh, no backend, no SSR, no server-side bundling.
 
 ---
@@ -121,7 +121,7 @@ import {
 | ------------------------- | ------------------------------------------------- | -------- | ------------ | ------------------------------------------------------------------- |
 | `files`                   | `Record<string, string>`                          | yes      | —            | flat path → source map                                              |
 | `onFilesChange`           | `(next) => void`                                  | yes      | —            | called on every set/remove/rename                                   |
-| `vendor`                  | `VendorBundle`                                    | yes      | —            | `{ importMap, baseUrl? }`                                           |
+| `vendor`                  | `VendorBundle`                                    | yes      | —            | `{ importMap, types? }`                                             |
 | `editor`                  | `React.FC<ReplEditorProps>`                       | yes      | —            | adapter component                                                   |
 | `entry`                   | `string`                                          | no       | `'App.tsx'`  | the logical entry path                                              |
 | `transformDebounceMs`     | `number`                                          | no       | `150`        |                                                                     |
@@ -248,21 +248,23 @@ base64 data URLs so it works under srcdoc with zero hosting setup. ~150 kB
 gzipped JS, plus pre-baked `.d.ts` (`vendor.types`) so Monaco shows real
 red squiggles + hover signatures for the same packages.
 
-the `.d.ts` payload (~100 kB gzipped) lives in a separate code-split chunk
-and only loads when an editor adapter actually mounts — preview-only or
-non-Monaco consumers never pay for it. need to warm it earlier (prefetch on
-hover, idle time, etc.)? import `loadVendorTypes` from the same subpath and
-call it whenever.
+the import map and the `.d.ts` payload are both code-split. the import-map
+chunk loads when `<Repl/>` mounts; the types chunk loads when an editor
+mounts. preview-only or non-Monaco consumers never download types; routes
+that never mount `<Repl/>` ship neither. need to warm a chunk earlier
+(prefetch on hover, idle, etc.)? `loadVendorImportMap` / `loadVendorTypes`
+are exported from the same subpath.
 
 if your demo needs literally only those libs, stop reading.
 
 ### Custom
 
-You're going to outgrow the default. when that happens, write a `vendor.ts`
-that declares the bundle shape via standard ESM imports/exports:
+You're going to outgrow the default. when that happens, write a
+`vendor.entry.ts` that declares the bundle shape via standard ESM
+imports/exports:
 
 ```ts
-// vendor.ts
+// src/sandbox/vendor.entry.ts
 // Re-exports the iframe-runtime required core (react, react-dom,
 // react-dom/client, react/jsx-runtime, react/jsx-dev-runtime,
 // react-refresh/runtime). Skip this and the build errors loudly.
@@ -281,61 +283,60 @@ then build it:
 # repl-vendor-build needs esbuild; it's an optional peer dep, install once:
 npm i -D esbuild
 
-npx repl-vendor-build vendor.ts \
-  --out public/vendor \
-  --bundle-out src/vendor/repl.vendor.json
-# → public/vendor/<chunks>.js     (one ESM chunk per package, served at /vendor/*)
-# → public/vendor/repl.types.json (.d.ts payload, fetched at runtime)
-# → src/vendor/repl.vendor.json   (just the import map — bundler-imported)
+npx repl-vendor-build src/sandbox/vendor.entry.ts
+# → src/sandbox/vendor.generated/index.ts          (exports customVendor)
+# → src/sandbox/vendor.generated/import-map.json   ({ imports: { ... } })
+# → src/sandbox/vendor.generated/types.json        (.d.ts payload)
 ```
 
-types live next to the JS chunks rather than inlined in the bundler-imported
-JSON, so the bundler chunk stays tiny (a few KB) and the multi-MB `.d.ts`
-payload is fetched in parallel. The bundle JSON embeds a `typesUrl` pointer,
-so `<Repl/>` does the fetch itself — wiring is just:
+The output folder name (`<basename-without-.entry.ext>.generated`) is
+matched by most default ignore globs (Prettier, oxlint, Knip) and is meant
+to be gitignored as a unit. Pass `--out <dir>` to override.
+
+Drop it into `<Repl>`:
 
 ```tsx
-import vendor from './vendor/repl.vendor.json';
-<Repl vendor={vendor} ... />
+import { customVendor } from './sandbox/vendor.generated';
+
+<Repl vendor={customVendor} ... />
 ```
 
-or code-split:
+Both the import-map and types are code-split. Routes that never mount
+`<Repl/>` ship neither; preview-only consumers never download types.
+SSR-safe. The generated `index.ts` has a loading-sequence diagram in
+its header comment if you want the details.
 
-```tsx
-<Repl vendor={import('./vendor/repl.vendor.json')} ... />
-```
-
-the builder is an esbuild wrapper. `format: 'inline'` emits base64 data URLs
-(stay-within-srcdoc, no hosting). `format: 'hosted'` emits real files with
-content hashes you can serve under `Cache-Control: immutable`
-
-programmatic API too if you want to run it from a script:
+Programmatic API if you want to run it from a script:
 
 ```ts
 import { build } from 'mini-react-repl/vendor-builder';
-const vendor = await build({
-  entry: 'vendor.ts',
-  format: 'hosted',
-  outDir: 'public/vendor',
+const { importMap, types } = await build({
+  entry: 'src/sandbox/vendor.entry.ts',
   types: 'embed', // optional; default 'omit'
 });
 ```
 
 ### Mix
 
-```ts
-import { defaultVendor } from 'mini-react-repl/vendor-default';
+To use both the default vendor's libraries (date-fns, dayjs, lodash-es)
+and your own additions, copy them into your `vendor.entry.ts` and add
+yours alongside:
 
-const vendor = {
-  importMap: {
-    imports: {
-      ...defaultVendor.importMap.imports,
-      zod: '/vendor/zod.js',
-    },
-  },
-  baseUrl: '/vendor',
-};
+```ts
+// src/sandbox/vendor.entry.ts
+export * from 'mini-react-repl/vendor-base';
+
+import * as dateFns from 'date-fns';
+import * as dayjs from 'dayjs';
+import * as lodash from 'lodash-es';
+import * as zod from 'zod'; // your additions
+
+export { dateFns as 'date-fns', dayjs, lodash as 'lodash-es', zod };
 ```
+
+One import map, one types chunk, no runtime composition. Runtime composition
+isn't supported anyway — `defaultVendor.importMap` / `customVendor.importMap`
+are lazy thunks now, not plain objects.
 
 ### Virtual modules
 

@@ -27,22 +27,6 @@ describe('preview-html', () => {
     expect(html.indexOf('id="root"')).toBeLessThan(html.indexOf('id="extra"'));
   });
 
-  it('applies vendor.baseUrl to relative entries only', () => {
-    const html = generatePreviewHtml({
-      vendor: {
-        importMap: {
-          imports: {
-            react: 'react.js',
-            'date-fns': 'https://cdn.example/date-fns.js',
-          },
-        },
-        baseUrl: '/vendor',
-      },
-    });
-    expect(html).toContain('"react":"/vendor/react.js"');
-    expect(html).toContain('"date-fns":"https://cdn.example/date-fns.js"');
-  });
-
   it('disables overlay when showErrorOverlay is false', () => {
     const html = generatePreviewHtml({ vendor, showErrorOverlay: false });
     expect(html).toContain('data-overlay="off"');

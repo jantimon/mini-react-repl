@@ -2,6 +2,33 @@
 
 All notable changes to `mini-react-repl`. Dates are YYYY-MM-DD.
 
+## 0.16.0 - 2026-05-27
+
+### Changed (breaking)
+
+- `repl-vendor-build` now writes a **folder**, not a single JSON. The folder contains a thin `index.ts` exporting a ready-to-use `customVendor: VendorBundle` plus two leaf JSONs (`import-map.json`, `types.json`). The generated `index.ts` consumes **both** payloads through dynamic `import()`, so bundlers (Vite/Webpack/Rolldown) code-split each into its own chunk. Routes that never mount `<Repl/>` ship neither.
+- `--out` now takes a directory. When omitted, the CLI derives `<entry-dir>/<entry-stem>.generated/` from the entry path (any JS/TS extension is accepted; the `.entry.` infix is stripped if present, so `vendor.entry.ts` and `vendor.ts` both produce `vendor.generated/`). The `.generated` suffix is matched by most default ignore globs (Prettier, oxlint, Knip) so existing CI does not need to allow-list it. Pass `--out <dir>` to override.
+- The single-file output from 0.15.0 is gone. There is no flag to restore it. The folder is the only output shape.
+- `VendorBundle.importMap` is now a union: it accepts a sync `ImportMap`, a `Promise<ImportMap | { default: ImportMap }>`, **or** a thunk returning either. The generator emits the thunk form (with an SSR window-guard) so the host bundle never inlines vendor data. `<ReplProvider/>` resolves the thunk on `<Repl/>` mount; the iframe boots once it lands. Direct callers of `mini-react-repl/preview-html`'s `generatePreviewHtml({ vendor })` must still pass a resolved bundle (sync `importMap`) — the new exported `ResolvedVendorBundle` names this shape.
+- `mini-react-repl/vendor-default`'s `defaultVendor.importMap` is now wired through `loadVendorImportMap()`, mirroring the existing `loadVendorTypes()`. The default-vendor dist split is now `data-import-map-*.js` + `data-types-*.js`; consumers using `defaultVendor` directly see no API change beyond the now-lazy semantics. `loadVendorImportMap()` is a new named export for prefetching (hover, idle).
+- Generated chunks use `webpackChunkName` hints `mini-react-repl-import-map` and `mini-react-repl-types` so the chunk filenames in bundler output and Network panels make their origin obvious. Vite/Rolldown still hash the actual filenames; the magic comment seeds the base name where supported.
+
+### Migration
+
+1. Drop `--out`: `repl-vendor-build src/vendor/vendor.ts` (output goes to the sibling `vendor.generated/` folder).
+2. Replace the JSON import with the named export:
+   ```diff
+   - import vendor from './vendor/repl.vendor.json';
+   + import { customVendor as vendor } from './vendor/vendor.generated';
+   ```
+3. `.gitignore` the new folder and delete the old `repl.vendor.json`.
+
+### Why
+
+The 0.15.0 inline-only refactor lumped types into the same JSON as the import map, so any consumer doing `import("./vendor.generated.json")` parsed the entire ~5 MB type payload up-front even when the editor never mounted. The library still supported lazy types end-to-end (`VendorBundle.types` accepts a function, and `<EditorHost/>` invokes it on mount), but the builder offered no way to expose them as a separately-loadable artifact short of stripping them entirely with `--no-types`. The folder output restores the laziness as the default.
+
+The import map itself was also a problem. Even after stripping types, a typical custom vendor's import map is 1–2 MB of base64 data URLs, and `import importMap from './vendor.generated.json'` baked the whole thing into the host bundle as a JS object literal — paid by every route in the app, including pages that never mount `<Repl/>`. Making `VendorBundle.importMap` a lazy thunk (resolved by the library on `<Repl/>` mount) lets bundlers code-split the import map into its own chunk: non-sandbox routes pay nothing for vendor data, sandbox routes parse a much smaller host bundle, and SSR doesn't pull the chunk into the server bundle. The iframe still can't boot before the import map lands (the browser requires `<script type="importmap">` to be in the srcdoc before any module script that uses a bare specifier runs), but the import-map fetch now races the rest of the React render work — and the types fetch runs in parallel with both the import-map fetch and the in-iframe swc-wasm fetch when an editor is mounted.
+
 ## 0.15.0 — 2026-05-26
 
 ### Security

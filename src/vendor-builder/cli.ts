@@ -1,10 +1,18 @@
 #!/usr/bin/env node
 /**
- * `repl-vendor-build` CLI — bundles a vendor manifest into a single JSON
- * file with `data:` URLs for every entry. The output is bundler-importable;
- * pass it straight to `<Repl vendor={...} />`.
+ * `repl-vendor-build` CLI — bundles a vendor manifest into a folder containing
+ * a ready-to-use TypeScript entry plus the two data leaves (import map and
+ * type definitions). The entry wires *both* the import map and the types
+ * via dynamic `import()` so the bundler code-splits each payload into its
+ * own chunk: the import-map chunk loads when `<Repl/>` mounts; the types
+ * chunk loads when the editor mounts. Routes that never mount `<Repl/>`
+ * ship neither.
  *
- *   npx repl-vendor-build vendor.ts --out src/vendor/repl.vendor.json
+ *   npx repl-vendor-build src/sandbox/vendor.entry.ts
+ *   # → src/sandbox/vendor.generated/{index.ts,import-map.json,types.json}
+ *
+ *   import { customVendor } from './sandbox/vendor.generated';
+ *   <ReplProvider vendor={customVendor}>…</ReplProvider>
  *
  * For programmatic control, use the API:
  *   import { build } from 'mini-react-repl/vendor-builder';
@@ -14,21 +22,47 @@
 
 import { build } from './build.ts';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 type Args = {
   entry: string;
-  out: string;
+  outDir: string;
   nodeEnv: 'development' | 'production';
   types: boolean;
 };
+
+/**
+ * Default output: sibling folder named after the entry, with `.generated`
+ * appended so existing ignore globs (Prettier, oxlint, Knip) pick it up.
+ * The `.entry.` infix is stripped if present so the input/output stems
+ * stay aligned:
+ *
+ *   src/sandbox/vendor.entry.ts → src/sandbox/vendor.generated/
+ *   src/sandbox/vendor.ts       → src/sandbox/vendor.generated/
+ *
+ * Any JS/TS extension is accepted (ts, tsx, js, jsx, mts, mjs, cts, cjs);
+ * pass `--out <dir>` to override.
+ */
+export function deriveOutDir(entry: string): string {
+  const file = basename(entry);
+  const stripped = file.replace(/\.entry\.[mc]?[jt]sx?$/, '').replace(/\.[mc]?[jt]sx?$/, '');
+  if (stripped === file) {
+    throw new Error(
+      `Cannot derive --out from "${entry}" (filename does not end in .ts, .tsx, .js, .jsx, .mts, .mjs, .cts, or .cjs). ` +
+        'Pass --out <dir> explicitly.',
+    );
+  }
+  return join(dirname(entry), `${stripped}.generated`);
+}
 
 function parseArgs(argv: string[]): Args {
   const args: Partial<Args> = { nodeEnv: 'development', types: true };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === '--out' || a === '-o') {
-      args.out = argv[++i];
+      args.outDir = argv[++i];
     } else if (a === '--prod') {
       args.nodeEnv = 'production';
     } else if (a === '--no-types') {
@@ -46,46 +80,60 @@ function parseArgs(argv: string[]): Args {
   }
   if (!args.entry) {
     throw new Error(
-      'Missing entry file. Usage: repl-vendor-build <entry.ts> --out <bundle.json>\n' +
+      'Missing entry file. Usage: repl-vendor-build <entry.ts> [--out <dir>]\n' +
         '       Run with --help for details.',
     );
   }
-  if (!args.out) throw new Error('--out is required');
+  if (!args.outDir) {
+    args.outDir = deriveOutDir(args.entry);
+  }
   return args as Args;
 }
 
 function printHelp(): void {
-  process.stdout.write(`repl-vendor-build — produce a vendor bundle for mini-react-repl
+  process.stdout.write(`repl-vendor-build — produce a vendor bundle folder for mini-react-repl
 
 Usage:
-  repl-vendor-build <entry-file> --out <bundle.json> [options]
+  repl-vendor-build <entry-file> [options]
 
 The entry file is a TypeScript or JavaScript module that declares the bundle
 shape via standard ESM \`import * as X from '<spec>'; export { X as '<key>' }\`.
 Re-export the shipped iframe-runtime core by adding
 \`export * from 'mini-react-repl/vendor-base'\` at the top.
 
-Required:
-  -o, --out <file>         path for the serialized bundle JSON
-                           (typically alongside your source so you can import it)
-
 Optional:
+  -o, --out <dir>          output directory (default: sibling to <entry-file>,
+                           named <entry-stem>.generated — the \`.entry.\` infix
+                           is stripped if present, so \`vendor.entry.ts\` and
+                           \`vendor.ts\` both produce \`vendor.generated/\`)
       --no-types           skip the .d.ts walk (smaller output, no editor type info)
       --prod               use NODE_ENV=production (default development)
   -h, --help               show this help
 
-Output (single file):
-  { importMap: { imports: { 'react': 'data:text/javascript;base64,...', ... } },
-    types: { libs: [...] } }   // present unless --no-types
+Output folder layout:
+  <out>/
+    index.ts          ← exports \`customVendor: VendorBundle\`, with lazy
+                        importMap + lazy types (both via dynamic import)
+    import-map.json   ← { imports: { 'react': 'data:...', ... } }
+    types.json        ← { libs: [...] }     (absent with --no-types)
 
 Consumer:
-  import vendor from './vendor/repl.vendor.json';
-  <Repl vendor={vendor} ... />
+  import { customVendor } from './vendor.generated';
+  <ReplProvider vendor={customVendor} ... />
 
-  // Code-split: bundlers split the JSON when imported dynamically.
-  <Repl vendor={import('./vendor/repl.vendor.json')} ... />
+Why a folder, not a single file?
+  The generated index.ts uses dynamic \`import()\` for *both* import-map.json
+  and types.json, so bundlers (Webpack/Vite/Rolldown) code-split each
+  payload into its own chunk. Routes that never mount <Repl/> ship neither.
+  Preview-only consumers never fetch types; the editor triggers it on mount.
+  An SSR window-guard short-circuits the thunks to empty payloads on the
+  server so neither chunk is pulled into the SSR bundle.
 
-Example vendor.ts:
+  The default folder name ends in \`.generated\` so most linter/formatter
+  configs (Prettier, oxlint, Knip) skip it automatically. Add the folder
+  to .gitignore — regenerate with this CLI as needed.
+
+Example entry file (vendor.entry.ts):
   export * from 'mini-react-repl/vendor-base';
 
   import * as zod from 'zod';
@@ -95,9 +143,86 @@ Example vendor.ts:
     lodash,
   };
 
-Example:
-  repl-vendor-build vendor.ts --out src/vendor/repl.vendor.json
+Example invocation:
+  repl-vendor-build src/sandbox/vendor.entry.ts
+  # → src/sandbox/vendor.generated/{index.ts,import-map.json,types.json}
 `);
+}
+
+/**
+ * Source of the generated `index.ts`. Both the import map and the types
+ * payload are wired through dynamic `import()` so the bundler code-splits
+ * each into its own chunk; routes that never mount `<Repl/>` ship neither.
+ * An SSR window-guard short-circuits the thunks to empty payloads on the
+ * server so the JSON chunks aren't pulled into the SSR bundle.
+ */
+export function renderIndexTs(opts: { hasTypes: boolean }): string {
+  const typesProp = opts.hasTypes
+    ? `
+  types: () =>
+    typeof window === 'undefined'
+      ? Promise.resolve(EMPTY_TYPE_BUNDLE)
+      : import(/* webpackChunkName: "mini-react-repl-types" */ './types.json').then((m) => m.default),`
+    : '';
+  const emptyTypeConst = opts.hasTypes
+    ? `\nconst EMPTY_TYPE_BUNDLE: TypeBundle = { libs: [] };\n`
+    : '';
+  const typeImports = opts.hasTypes
+    ? 'ImportMap, TypeBundle, VendorBundle'
+    : 'ImportMap, VendorBundle';
+  return `/* eslint-disable */
+// @generated by repl-vendor-build — do not edit. Regenerate with
+// \`repl-vendor-build <entry>\`.
+//
+// Drop into <ReplProvider>:
+//
+//   import { customVendor } from './vendor.generated';
+//   <ReplProvider vendor={customVendor}>…</ReplProvider>
+//
+// Loading sequence
+// ================
+//
+//   host bundle parses
+//          │
+//          ▼
+//   <Repl/> renders
+//          │
+//          ├──► [chunk] import-map.json ─┐
+//          │                              │
+//          │            (if editor mounts)│
+//          ├──► <EditorHost/> mounts ─┐   │  parallel
+//          │                          │   │  host-side
+//          │                          ▼   │  fetches
+//          │           [chunk] types.json │
+//          │                              │
+//          ▼                              ▼
+//   importMap resolved ◄──────────────────┘
+//          │
+//          ▼
+//   iframe srcdoc written (importmap inlined)
+//          │
+//          ▼
+//   iframe fetches swc.wasm (parallel with types.json if still in flight)
+//          │
+//          ▼
+//   preview renders   (+ editor gets types when types.json lands)
+//
+// Both JSONs ship as their own bundler chunks. Routes that never mount
+// <Repl/> pay nothing for vendor data. SSR is a no-op: the window guard
+// resolves to empty payloads on the server so the chunks stay out of
+// the SSR bundle.
+import type { ${typeImports} } from 'mini-react-repl';
+
+const EMPTY_IMPORT_MAP: ImportMap = { imports: {} };${emptyTypeConst}
+export const customVendor: VendorBundle = {
+  importMap: () =>
+    typeof window === 'undefined'
+      ? Promise.resolve(EMPTY_IMPORT_MAP)
+      : import(/* webpackChunkName: "mini-react-repl-import-map" */ './import-map.json').then(
+          (m) => m.default,
+        ),${typesProp}
+};
+`;
 }
 
 /**
@@ -128,13 +253,41 @@ async function main(): Promise<void> {
     types: args.types ? 'embed' : 'omit',
   });
 
-  const bundlePath = resolve(process.cwd(), args.out);
-  await mkdir(dirname(bundlePath), { recursive: true });
-  await writeFile(bundlePath, JSON.stringify(bundle, null, 2) + '\n', 'utf8');
-  process.stderr.write(`✓ wrote ${bundlePath}\n`);
+  const outDir = resolve(process.cwd(), args.outDir);
+  await mkdir(outDir, { recursive: true });
+
+  const importMapPath = join(outDir, 'import-map.json');
+  await writeFile(importMapPath, JSON.stringify(bundle.importMap, null, 2) + '\n', 'utf8');
+
+  const hasTypes = !!bundle.types;
+  if (bundle.types) {
+    const typesPath = join(outDir, 'types.json');
+    await writeFile(typesPath, JSON.stringify(bundle.types, null, 2) + '\n', 'utf8');
+  }
+
+  const indexPath = join(outDir, 'index.ts');
+  await writeFile(indexPath, renderIndexTs({ hasTypes }), 'utf8');
+
+  const files = hasTypes ? 'index.ts, import-map.json, types.json' : 'index.ts, import-map.json';
+  process.stderr.write(`✓ wrote ${outDir}/ (${files})\n`);
 }
 
-main().catch((err) => {
-  process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
-  process.exit(1);
-});
+// Only run main() when invoked as a script — not when imported by tests.
+// Compare real paths because pnpm/npm symlink the bin into node_modules/.bin,
+// which makes `process.argv[1]` differ from `import.meta.url` after resolution.
+function isInvokedAsCli(): boolean {
+  const argvPath = process.argv[1];
+  if (!argvPath) return false;
+  try {
+    return realpathSync(argvPath) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
+
+if (isInvokedAsCli()) {
+  main().catch((err) => {
+    process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  });
+}

@@ -59,10 +59,7 @@ export function ensurePickerInstalled(iframe: HTMLIFrameElement): Promise<boolea
       window.removeEventListener('message', onAck);
     }
     window.addEventListener('message', onAck);
-    win.postMessage(
-      { __repl: true, kind: 'inspect:install', code: INSPECT_PICKER_CODE },
-      '*',
-    );
+    win.postMessage({ __repl: true, kind: 'inspect:install', code: INSPECT_PICKER_CODE }, '*');
   });
 
   installed.set(win, promise);

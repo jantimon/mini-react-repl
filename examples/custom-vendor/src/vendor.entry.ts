@@ -5,10 +5,12 @@
  *   pnpm build:vendor
  *
  * which expands to:
- *   repl-vendor-build src/vendor/vendor.ts --out src/vendor/repl.vendor.json
+ *   repl-vendor-build src/vendor.entry.ts
  *
- * Output is a single JSON file with `data:` URLs for every vendor entry,
- * imported directly by App.tsx — no static-hosting setup required.
+ * Output is the sibling folder src/vendor.generated/ containing index.ts +
+ * import-map.json + types.json. App.tsx imports the customVendor named
+ * export from the folder; the generated index.ts wires lazy types via
+ * dynamic import, so the bundler code-splits types into their own chunk.
  */
 
 // React + react-dom + react-refresh + jsx-runtime — required for the iframe

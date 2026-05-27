@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { build, extractImports } from '../../src/vendor-builder/build.ts';
+import { deriveOutDir, renderIndexTs } from '../../src/vendor-builder/cli.ts';
 
 const REQUIRED_CORE = [
   'react',
@@ -64,7 +65,7 @@ describe('vendor-builder', () => {
       'exposes jsxDEV from react/jsx-dev-runtime as a static export',
       async () => {
         const entry = await makeEntry(CORE_BLOCK);
-        const { importMap } = await build({ entry, format: 'inline', cwd });
+        const { importMap } = await build({ entry, cwd });
         const code = decodeDataUrl(importMap.imports['react/jsx-dev-runtime']!);
         expect(code).toMatch(/\bexport\b[\s\S]*\bjsxDEV\b/);
         // Sanity: prove the broken path (raw `export *` over CJS) is gone.
@@ -77,7 +78,7 @@ describe('vendor-builder', () => {
       'exposes jsx and jsxs from react/jsx-runtime',
       async () => {
         const entry = await makeEntry(CORE_BLOCK);
-        const { importMap } = await build({ entry, format: 'inline', cwd });
+        const { importMap } = await build({ entry, cwd });
         const code = decodeDataUrl(importMap.imports['react/jsx-runtime']!);
         expect(code).toMatch(/\bexport\b[\s\S]*\bjsx\b/);
         expect(code).toMatch(/\bexport\b[\s\S]*\bjsxs\b/);
@@ -91,7 +92,7 @@ describe('vendor-builder', () => {
       'externalizes react when listed alongside react-dom',
       async () => {
         const entry = await makeEntry(CORE_BLOCK);
-        const { importMap } = await build({ entry, format: 'inline', cwd });
+        const { importMap } = await build({ entry, cwd });
         const reactDom = decodeDataUrl(importMap.imports['react-dom']!);
         // The banner injects an ESM import for the external react.
         expect(reactDom).toMatch(/import\s+\*\s+as\s+__ext_\d+\s+from\s+["']react["']/);
@@ -108,7 +109,7 @@ describe('vendor-builder', () => {
         // When bundling react/jsx-runtime, only `react` is in the candidate
         // externals — never the bundle's own primary specifier.
         const entry = await makeEntry(CORE_BLOCK);
-        const { importMap } = await build({ entry, format: 'inline', cwd });
+        const { importMap } = await build({ entry, cwd });
         const jsx = decodeDataUrl(importMap.imports['react/jsx-runtime']!);
         // Banner ESM imports `react` — fine.
         expect(jsx).toMatch(/import\s+\*\s+as\s+__ext_\d+\s+from\s+["']react["']/);
@@ -127,7 +128,7 @@ describe('vendor-builder', () => {
 import * as lodash from 'lodash-es';
 export { lodash };
 `);
-        await expect(build({ entry, format: 'inline', cwd })).rejects.toThrow(
+        await expect(build({ entry, cwd })).rejects.toThrow(
           /missing required iframe-runtime specifiers[\s\S]*mini-react-repl\/vendor-base/,
         );
       },
@@ -138,7 +139,7 @@ export { lodash };
       'all six core specifiers populate the import map',
       async () => {
         const entry = await makeEntry(CORE_BLOCK);
-        const { importMap } = await build({ entry, format: 'inline', cwd });
+        const { importMap } = await build({ entry, cwd });
         for (const spec of REQUIRED_CORE) {
           expect(importMap.imports).toHaveProperty(spec);
         }
@@ -155,7 +156,7 @@ export { lodash };
 import * as lodash from 'lodash-es';
 export { lodash };
 `);
-        const { importMap } = await build({ entry, format: 'inline', cwd });
+        const { importMap } = await build({ entry, cwd });
         // Alias key 'lodash' present; canonical 'lodash-es' is not (we didn't
         // export it under that name).
         expect(importMap.imports).toHaveProperty('lodash');
@@ -175,7 +176,7 @@ import * as a from 'lodash-es';
 import * as b from 'lodash-es';
 export { a, b as 'lodash-es' };
 `);
-        const { importMap } = await build({ entry, format: 'inline', cwd });
+        const { importMap } = await build({ entry, cwd });
         // Both keys point at the same data: URL.
         expect(importMap.imports['a']).toBeDefined();
         expect(importMap.imports['lodash-es']).toBeDefined();
@@ -190,7 +191,7 @@ export { a, b as 'lodash-es' };
         const entry = await makeEntry(`${CORE_BLOCK}
 export * as lodash from 'lodash-es';
 `);
-        const { importMap } = await build({ entry, format: 'inline', cwd });
+        const { importMap } = await build({ entry, cwd });
         expect(importMap.imports).toHaveProperty('lodash');
       },
       TIMEOUT,
@@ -245,9 +246,7 @@ export * as lodash from 'lodash-es';
 import lodash from 'lodash-es';
 export { lodash };
 `);
-        await expect(build({ entry, format: 'inline', cwd })).rejects.toThrow(
-          /not backed by a namespace import/,
-        );
+        await expect(build({ entry, cwd })).rejects.toThrow(/not backed by a namespace import/);
       },
       TIMEOUT,
     );
@@ -260,11 +259,87 @@ export { forEach } from 'lodash-es';
 `);
         // esbuild desugars to `import { forEach } from 'lodash-es'`, which
         // hits the same code path as a default import — same message.
-        await expect(build({ entry, format: 'inline', cwd })).rejects.toThrow(
-          /not backed by a namespace import/,
-        );
+        await expect(build({ entry, cwd })).rejects.toThrow(/not backed by a namespace import/);
       },
       TIMEOUT,
     );
+  });
+
+  describe('CLI helpers', () => {
+    describe('deriveOutDir', () => {
+      it('strips .entry.ts and appends .generated', () => {
+        expect(deriveOutDir('src/sandbox/vendor.entry.ts')).toBe(
+          join('src/sandbox', 'vendor.generated'),
+        );
+      });
+
+      it('strips a plain JS/TS extension when .entry. is absent', () => {
+        expect(deriveOutDir('src/vendor.ts')).toBe(join('src', 'vendor.generated'));
+        expect(deriveOutDir('vendor.ts')).toBe('vendor.generated');
+        expect(deriveOutDir('src/repl.vendor.ts')).toBe(join('src', 'repl.vendor.generated'));
+      });
+
+      it('handles tsx, jsx, js, mts, mjs, cts, cjs', () => {
+        expect(deriveOutDir('a/b.entry.tsx')).toBe(join('a', 'b.generated'));
+        expect(deriveOutDir('a/b.entry.jsx')).toBe(join('a', 'b.generated'));
+        expect(deriveOutDir('a/b.entry.js')).toBe(join('a', 'b.generated'));
+        expect(deriveOutDir('a/b.entry.mts')).toBe(join('a', 'b.generated'));
+        expect(deriveOutDir('a/b.entry.cjs')).toBe(join('a', 'b.generated'));
+        expect(deriveOutDir('a/b.tsx')).toBe(join('a', 'b.generated'));
+        expect(deriveOutDir('a/b.mjs')).toBe(join('a', 'b.generated'));
+        expect(deriveOutDir('a/b.cts')).toBe(join('a', 'b.generated'));
+      });
+
+      it('handles a bare-filename entry', () => {
+        expect(deriveOutDir('vendor.entry.ts')).toBe('vendor.generated');
+      });
+
+      it('throws when the filename has no JS/TS extension', () => {
+        expect(() => deriveOutDir('vendor.json')).toThrow(/does not end in/);
+        expect(() => deriveOutDir('vendor')).toThrow(/does not end in/);
+      });
+    });
+
+    describe('renderIndexTs', () => {
+      it('emits a VendorBundle with lazy import map AND lazy types when hasTypes: true', () => {
+        const out = renderIndexTs({ hasTypes: true });
+        // importMap is lazy now — no static `import importMap from ...`
+        expect(out).not.toContain("import importMap from './import-map.json'");
+        // both chunks are dynamically imported
+        expect(out).toContain(
+          'import(/* webpackChunkName: "mini-react-repl-import-map" */ \'./import-map.json\')',
+        );
+        expect(out).toContain(
+          'import(/* webpackChunkName: "mini-react-repl-types" */ \'./types.json\')',
+        );
+        expect(out).toContain('.then(\n          (m) => m.default,\n        )');
+        // SSR no-op short-circuits both thunks on the server
+        expect(out).toContain("typeof window === 'undefined'");
+        expect(out).toContain('EMPTY_IMPORT_MAP');
+        expect(out).toContain('EMPTY_TYPE_BUNDLE');
+        // export shape
+        expect(out).toContain('export const customVendor: VendorBundle');
+        expect(out).toContain('importMap: () =>');
+        expect(out).toContain('types: () =>');
+        // lint/format pragmas
+        expect(out).toContain('/* eslint-disable */');
+        expect(out).toContain('// @generated by repl-vendor-build');
+        // loading-sequence chart in the header
+        expect(out).toContain('Loading sequence');
+      });
+
+      it('omits types wiring (but keeps lazy import map) when hasTypes: false', () => {
+        const out = renderIndexTs({ hasTypes: false });
+        expect(out).toContain(
+          'import(/* webpackChunkName: "mini-react-repl-import-map" */ \'./import-map.json\')',
+        );
+        expect(out).toContain('importMap: () =>');
+        expect(out).toContain('EMPTY_IMPORT_MAP');
+        expect(out).toContain("typeof window === 'undefined'");
+        expect(out).not.toContain('./types.json');
+        expect(out).not.toContain('types:');
+        expect(out).not.toContain('EMPTY_TYPE_BUNDLE');
+      });
+    });
   });
 });

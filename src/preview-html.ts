@@ -14,12 +14,16 @@
  * @public
  */
 
-import type { VendorBundle } from './types.ts';
+import type { ResolvedVendorBundle } from './types.ts';
 import { PREAMBLE_CODE, RUNTIME_CODE } from './runtime/runtime.bundled.ts';
 
 export type PreviewHtmlOptions = {
-  /** Vendor bundle to inline as `<script type="importmap">`. */
-  vendor: VendorBundle;
+  /**
+   * Vendor bundle to inline as `<script type="importmap">`. The library
+   * resolves any lazy `VendorBundle.importMap` thunk before calling this;
+   * direct callers must pass a resolved bundle (sync `importMap`).
+   */
+  vendor: ResolvedVendorBundle;
   /** Raw HTML injected into `<head>` before the import map. */
   headHtml?: string;
   /** Raw HTML injected into `<body>` after the React mount node. */
@@ -62,4 +66,3 @@ ${options.bodyHtml ?? ''}
 </body>
 </html>`;
 }
-

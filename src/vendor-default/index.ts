@@ -1,30 +1,35 @@
 /**
  * The curated default vendor bundle.
  *
- * Inlined as base64 data URLs so it works under iframe srcdoc with no
- * static-hosting setup on the consumer side. The runtime cost (~150 kB
- * gzipped JS) is paid only when this subpath is imported.
+ * Both the import map and the matching `.d.ts` payload are wired through
+ * dynamic `import()` so consumer bundlers code-split each into its own
+ * chunk. Routes that never mount `<Repl/>` ship neither; preview-only
+ * consumers never pay for types.
  *
- * The matching `.d.ts` payload (~100 kB gzipped) lives in a separate
- * code-split chunk and is **lazily fetched** by {@link loadVendorTypes} —
- * the library invokes it from `<EditorHost/>` only when an editor adapter
- * mounts. Preview-only / non-Monaco consumers never download it.
+ * Sizes (inlined as base64 data URLs):
+ *   - import map  ~150 kB gzipped JS
+ *   - types       ~100 kB gzipped JSON
  *
  * Includes: react, react-dom (+`react-dom/client`), react/jsx-runtime,
  * react/jsx-dev-runtime, react-refresh/runtime, date-fns, dayjs, lodash-es.
  *
  * @example
  * ```ts
- * // sync (eager — types still load lazily when the editor mounts)
+ * // recommended: pass the constant directly. The library invokes the lazy
+ * // thunks on `<Repl/>` mount (importMap) and `<EditorHost/>` mount (types)
+ * // so the chunks load when actually needed.
  * import { defaultVendor } from 'mini-react-repl/vendor-default'
  * <Repl vendor={defaultVendor} ... />
  *
- * // async (code-split — pass the dynamic import directly)
+ * // optional: code-split the whole `vendor-default` subpath too
  * <Repl vendor={import('mini-react-repl/vendor-default')} ... />
  *
- * // advanced: prefetch the types chunk on hover, idle, etc.
- * import { loadVendorTypes } from 'mini-react-repl/vendor-default'
- * button.addEventListener('pointerover', () => { void loadVendorTypes(); })
+ * // optional: prefetch a chunk on hover, idle, etc.
+ * import { loadVendorImportMap, loadVendorTypes } from 'mini-react-repl/vendor-default'
+ * button.addEventListener('pointerover', () => {
+ *   void loadVendorImportMap();
+ *   void loadVendorTypes();
+ * })
  * ```
  *
  * @see {@link build} for producing a custom vendor
@@ -32,8 +37,24 @@
  * @public
  */
 
-import { DEFAULT_VENDOR_IMPORT_MAP } from './data.ts';
-import type { TypeBundle, VendorBundle } from '../types.ts';
+import type { ImportMap, TypeBundle, VendorBundle } from '../types.ts';
+
+/**
+ * Lazily load the default vendor's import map as a separate chunk.
+ *
+ * Bundlers code-split the dynamic import below, so the import-map JSON is
+ * not shipped as part of `mini-react-repl/vendor-default`'s static bundle.
+ * The library invokes this from `<ReplProvider/>` when `<Repl/>` first
+ * mounts; consumers can also call it directly to warm the chunk (prefetch
+ * on hover, idle-time, etc.).
+ *
+ * SSR-safe: short-circuits to an empty import map on the server so the
+ * chunk is not pulled into the SSR bundle.
+ */
+export const loadVendorImportMap = (): Promise<{ default: ImportMap }> =>
+  typeof window === 'undefined'
+    ? Promise.resolve({ default: { imports: {} } })
+    : import(/* webpackChunkName: "mini-react-repl-import-map" */ './data-import-map.js');
 
 /**
  * Lazily load the default vendor's `.d.ts` payload as a separate chunk.
@@ -44,14 +65,16 @@ import type { TypeBundle, VendorBundle } from '../types.ts';
  * TypeScript service first mounts; consumers can also call it directly
  * to warm the chunk (prefetch on hover, idle-time, etc.).
  *
- * Returns the dynamic-import shape `{ default: TypeBundle }`; both the
- * library and direct callers may forward this Promise to `vendor.types`,
- * which already handles the `{ default }` unwrap.
+ * SSR-safe: short-circuits to an empty type bundle on the server so the
+ * chunk is not pulled into the SSR bundle.
  */
-export const loadVendorTypes = (): Promise<{ default: TypeBundle }> => import('./data-types.js');
+export const loadVendorTypes = (): Promise<{ default: TypeBundle }> =>
+  typeof window === 'undefined'
+    ? Promise.resolve({ default: { libs: [] } })
+    : import(/* webpackChunkName: "mini-react-repl-types" */ './data-types.js');
 
 export const defaultVendor: VendorBundle = {
-  importMap: DEFAULT_VENDOR_IMPORT_MAP,
+  importMap: loadVendorImportMap,
   types: loadVendorTypes,
 };
 

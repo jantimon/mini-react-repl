@@ -50,11 +50,9 @@ test.describe('mini-react-repl/inspect', () => {
     // handler in the iframe — easiest signal: the documentElement carries
     // the data attribute the picker sets on enable. Read inside the iframe
     // because `iframe.contentDocument` is null under sandbox="allow-scripts".
-    await expect(preview(page).locator('html')).toHaveAttribute(
-      'data-repl-inspect-active',
-      '',
-      { timeout: 5_000 },
-    );
+    await expect(preview(page).locator('html')).toHaveAttribute('data-repl-inspect-active', '', {
+      timeout: 5_000,
+    });
 
     await h1.click();
 
@@ -140,11 +138,9 @@ test.describe('mini-react-repl/inspect', () => {
     await expect(h1).toContainText(/Today is/i, { timeout: 30_000 });
 
     await page.evaluate(() => window.__replTest__.setInspectActive(true));
-    await expect(preview(page).locator('html')).toHaveAttribute(
-      'data-repl-inspect-active',
-      '',
-      { timeout: 5_000 },
-    );
+    await expect(preview(page).locator('html')).toHaveAttribute('data-repl-inspect-active', '', {
+      timeout: 5_000,
+    });
 
     await h1.hover();
 

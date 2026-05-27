@@ -18,7 +18,7 @@ import { createContext } from 'react';
 import type {
   Files,
   LanguageMap,
-  VendorBundle,
+  ResolvedVendorBundle,
   ReplError,
   ReplLoader,
   VirtualModules,
@@ -72,13 +72,14 @@ export type ReplActionsContextValue = {
   /** Logical entry path (snapshotted on first mount). */
   entry: string;
   /**
-   * Vendor bundle. `null` until a promise-typed `vendor` prop resolves; set
-   * exactly once thereafter (subsequent prop changes warn in dev and are
-   * ignored, matching the boot-time semantics of {@link entry} et al).
-   * Consumers that need vendor (`<ReplPreview/>`, `<EditorHost/>`) must
-   * tolerate the `null` interim and render a placeholder until it lands.
+   * Vendor bundle, fully resolved (sync `importMap`). `null` until both the
+   * outer `vendor` prop AND its `importMap` have resolved; set exactly once
+   * thereafter (subsequent prop changes warn in dev and are ignored, matching
+   * the boot-time semantics of {@link entry} et al). Consumers that need
+   * vendor (`<ReplPreview/>`, `<EditorHost/>`) must tolerate the `null`
+   * interim and render a placeholder until it lands.
    */
-  vendor: VendorBundle | null;
+  vendor: ResolvedVendorBundle | null;
   /** swc-wasm URL override (snapshotted on first mount). */
   swcWasmUrl: string | undefined;
   /** Optional file pre-processor (snapshotted on first mount). */

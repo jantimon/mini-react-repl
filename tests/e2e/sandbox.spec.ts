@@ -46,7 +46,10 @@ test.describe('iframe sandbox', () => {
       'allow-scripts allow-forms',
     );
     await expect(page.locator('iframe.repl-iframe')).toHaveAttribute('allow', '');
-    await expect(page.locator('iframe.repl-iframe')).toHaveAttribute('referrerpolicy', 'no-referrer');
+    await expect(page.locator('iframe.repl-iframe')).toHaveAttribute(
+      'referrerpolicy',
+      'no-referrer',
+    );
   });
 
   test('user code cannot mutate window.parent.document', async ({ page }) => {

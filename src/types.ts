@@ -16,8 +16,25 @@
  * @see https://github.com/WICG/import-maps
  */
 export type VendorBundle = {
-  /** Standard import-map JSON: `{ imports: { 'react': 'data:text/javascript;base64,...' } }`. */
-  importMap: ImportMap;
+  /**
+   * Standard import-map JSON:
+   * `{ imports: { 'react': 'data:text/javascript;base64,...' } }`.
+   *
+   * Accepts:
+   * - a sync `ImportMap`,
+   * - a `Promise<ImportMap>` or JSON-import result (`{ default: ImportMap }`),
+   * - or a **function** returning either of the above — invoked once on
+   *   `<Repl/>` mount so the bundler code-splits the import-map data into
+   *   its own chunk. Routes that never mount `<Repl/>` don't pay for it.
+   *
+   * The library waits for this to resolve before booting the iframe (the
+   * browser needs `<script type="importmap">` inlined in the srcdoc before
+   * any module script that imports a bare specifier can run).
+   */
+  importMap:
+    | ImportMap
+    | PromiseLike<ImportMap | { default: ImportMap }>
+    | (() => ImportMap | PromiseLike<ImportMap | { default: ImportMap }>);
   /**
    * Optional `.d.ts` payload paired with the vendor's runtime modules.
    * Editors that support it (e.g. {@link https://www.npmjs.com/package/monaco-editor | Monaco})
@@ -36,6 +53,20 @@ export type VendorBundle = {
     | TypeBundle
     | PromiseLike<TypeBundle | { default: TypeBundle }>
     | (() => TypeBundle | PromiseLike<TypeBundle | { default: TypeBundle }>);
+};
+
+/**
+ * Fully-resolved {@link VendorBundle} as seen by internal consumers
+ * (`<ReplPreview/>`, `generatePreviewHtml()`). The `importMap` is sync
+ * because the host has already awaited it; `types` stays lazy because
+ * the editor adapter resolves it on its own timeline.
+ *
+ * Exported so `generatePreviewHtml` can keep its sync signature — pass a
+ * resolved bundle (or just `{ importMap: ... }`) in.
+ */
+export type ResolvedVendorBundle = {
+  importMap: ImportMap;
+  types?: VendorBundle['types'];
 };
 
 /**
