@@ -9,8 +9,9 @@
     "playwright-report",
     "src/runtime/runtime.bundled.ts",
     "src/inspect/picker.bundled.ts",
-    "src/vendor-default/data.ts",
-    "examples/*/src/vendor/repl.vendor.json"
+    "src/vendor-default/data-import-map.ts",
+    "src/vendor-default/data-types.ts",
+    "examples/*/src/vendor.generated"
   ],
   "semi": true,
   "singleQuote": true,

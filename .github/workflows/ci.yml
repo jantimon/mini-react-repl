@@ -30,6 +30,14 @@ jobs:
       - run: pnpm run build
       - run: pnpm format:check
       - run: pnpm lint
+      # Re-link the `repl-vendor-build` workspace bin (skipped on the
+      # first install because dist/vendor-builder/cli.js wasn't built
+      # yet), then exercise the CLI on the custom-vendor example. This
+      # populates `examples/custom-vendor/src/vendor.generated/` (which
+      # is gitignored) so the next `pnpm typecheck` can resolve it, and
+      # doubles as an end-to-end smoke test of `repl-vendor-build`.
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter custom-vendor build:vendor
       - run: pnpm typecheck
       - run: pnpm test
 

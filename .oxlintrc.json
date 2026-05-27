@@ -8,7 +8,9 @@
     "test-results",
     "playwright-report",
     "src/runtime/runtime.bundled.ts",
-    "src/vendor-default/data.ts"
+    "src/vendor-default/data-import-map.ts",
+    "src/vendor-default/data-types.ts",
+    "examples/*/src/vendor.generated"
   ],
   "categories": {
     "correctness": "error",
