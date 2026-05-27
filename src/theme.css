@@ -97,7 +97,9 @@
     justify-content: center;
     width: 16px;
     height: 16px;
+    border: none;
     border-radius: 3px;
+    background: transparent;
     font-size: 13px;
     line-height: 1;
     color: var(--repl-tab-fg, #889);
