@@ -1,9 +1,9 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { Repl, type Files } from 'mini-react-repl';
 import { defaultVendor } from 'mini-react-repl/vendor-default';
-import { MonacoReplEditor } from 'mini-react-repl/editor-monaco';
 import type { ElementPick } from 'mini-react-repl/inspect';
 import 'mini-react-repl/theme.css';
+import { FocusableMonacoEditor, revealEditorLine } from './FocusableMonacoEditor';
 
 import swcWasmUrl from '@swc/wasm-web/wasm_bg.wasm?url';
 
@@ -158,6 +158,7 @@ export function TodoList({ items }: { items: string[] }) {
 
 export function App() {
   const [files, setFiles] = useState<Files>(HELLO);
+  const [activePath, setActivePath] = useState<string | null>('App.tsx');
   const [wantInspect, setWantInspect] = useState(false);
   const [active, setActive] = useState(false);
   const [lastPick, setLastPick] = useState<ElementPick | null>(null);
@@ -165,6 +166,18 @@ export function App() {
   const onToggleInspect = () => {
     setWantInspect(true);
     setActive((a) => !a);
+  };
+
+  const onElementPicked = (pick: ElementPick) => {
+    setLastPick(pick);
+    setActive(false);
+    // Walk the owner chain for the first frame whose source file we know
+    // about; vendor / virtual frames don't appear in the file tabs and
+    // can't be revealed.
+    const top = pick.stack.find((f) => f.fileName in files);
+    if (!top) return;
+    setActivePath(top.fileName);
+    revealEditorLine(top.fileName, top.lineNumber, top.columnNumber);
   };
 
   return (
@@ -226,18 +239,17 @@ export function App() {
         <Repl
           files={files}
           onFilesChange={setFiles}
+          activePath={activePath}
+          onActivePathChange={setActivePath}
           vendor={defaultVendor}
-          editor={MonacoReplEditor}
+          editor={FocusableMonacoEditor}
           swcWasmUrl={swcWasmUrl}
         >
           {wantInspect && (
             <Suspense fallback={null}>
               <InspectMode
                 active={active}
-                onElementPicked={(pick) => {
-                  setLastPick(pick);
-                  setActive(false);
-                }}
+                onElementPicked={onElementPicked}
                 onCancel={() => setActive(false)}
               />
             </Suspense>
