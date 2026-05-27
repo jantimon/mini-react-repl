@@ -14,16 +14,16 @@
  * @public
  */
 
-import type { ResolvedVendorBundle } from './types.ts';
+import type { ImportMap } from './types.ts';
 import { PREAMBLE_CODE, RUNTIME_CODE } from './runtime/runtime.bundled.ts';
 
 export type PreviewHtmlOptions = {
   /**
-   * Vendor bundle to inline as `<script type="importmap">`. The library
+   * Import map to inline as `<script type="importmap">`. The library
    * resolves any lazy `VendorBundle.importMap` thunk before calling this;
-   * direct callers must pass a resolved bundle (sync `importMap`).
+   * direct callers must pass a resolved (sync) `ImportMap`.
    */
-  vendor: ResolvedVendorBundle;
+  importMap: ImportMap;
   /** Raw HTML injected into `<head>` before the import map. */
   headHtml?: string;
   /** Raw HTML injected into `<body>` after the React mount node. */
@@ -50,7 +50,7 @@ export function generatePreviewHtml(options: PreviewHtmlOptions): string {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Preview</title>
 ${options.headHtml ?? ''}
-<script type="importmap">${JSON.stringify(options.vendor.importMap)}</script>
+<script type="importmap">${JSON.stringify(options.importMap)}</script>
 <style>
   html, body { margin: 0; padding: 0; min-height: 100%; }
   body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }

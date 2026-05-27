@@ -24,7 +24,6 @@ import type {
   Files,
   ImportMap,
   LanguageMap,
-  ResolvedVendorBundle,
   VendorBundle,
   ReplError,
   ReplLoader,
@@ -80,10 +79,11 @@ export type ReplProviderProps = {
    * its own chunk; the iframe boots once the chunk lands.
    *
    * The provider always renders its children. While the bundle is pending,
-   * `actions.vendor` is `null` in context — `<ReplPreview/>` shows a sized
-   * placeholder and `<EditorHost/>` mounts without vendor types until the
-   * bundle lands. File CRUD (`useRepl`, `<ReplFileTabs/>`) is unaffected and
-   * works immediately.
+   * `<ReplPreview/>` shows a sized placeholder until the import map lands;
+   * `<EditorHost/>` mounts without vendor types until the bundle resolves
+   * (types unblock as soon as the outer bundle is in hand, independent of
+   * the import-map resolution). File CRUD (`useRepl`, `<ReplFileTabs/>`)
+   * is unaffected and works immediately.
    *
    * **Boot-time only after resolution.** Latched on first resolution.
    * Subsequent identity changes are ignored (a dev-mode warning fires). To
@@ -230,42 +230,33 @@ function resolveImportMap(input: VendorBundle['importMap']): Promise<ImportMap> 
 export function ReplProvider(props: ReplProviderProps): React.ReactElement {
   const vendorProp = props.vendor;
 
-  // Two-stage resolution:
-  //   1. The outer `vendor` prop may be a Promise (consumer dynamic-imported
-  //      the bundle). Resolve to a `VendorBundle`.
-  //   2. The bundle's `importMap` may itself be a thunk / Promise — that's
-  //      the lazy-import-map path the codegen emits. Resolve to an
-  //      `ImportMap`. Only then is the bundle ready to feed `<ReplPreview/>`
-  //      (the iframe srcdoc needs the import map inlined synchronously).
+  // The outer `vendor` prop has two independent async edges:
+  //   1. the prop itself may be a Promise (`vendor={import('./vendor')}`)
+  //   2. the bundle's `importMap` may be a thunk / Promise (the codegen
+  //      default — keeps the import-map JSON in its own chunk).
   //
-  // Both stages can be satisfied synchronously when consumers pass a fully
-  // sync bundle, so the common "boot from a top-level constant" case never
-  // hits the pending state. Computed inline (not memoized) because the
-  // result is only read by the first-render `useState`/`useRef` initializers
-  // below — caching it across renders would be wasted work.
-  const initialResolved: ResolvedVendorBundle | null =
-    isThenable<VendorBundle | { default: VendorBundle }>(vendorProp) ||
-    !isPlainImportMap(vendorProp.importMap)
-      ? null
-      : {
-          importMap: vendorProp.importMap,
-          ...(vendorProp.types ? { types: vendorProp.types } : {}),
-        };
-  const [resolvedVendor, setResolvedVendor] = useState<ResolvedVendorBundle | null>(
-    initialResolved,
-  );
-  // Once vendor has been resolved (sync prop OR promise fulfilled), latch it.
-  // Subsequent prop changes are boot-time-only and ignored, matching `entry`
-  // et al. The ref stores the latched source so dev-warn can compare identity.
-  // `undefined` is the not-yet-latched sentinel; the prop type forbids
-  // `undefined` as a vendor value, so it can't collide with a real prop.
-  const latchedSourceRef = useRef<
-    VendorBundle | PromiseLike<VendorBundle | { default: VendorBundle }> | undefined
-  >(initialResolved !== null ? vendorProp : undefined);
+  // `importMap` and `types` resolve on independent timelines and are
+  // surfaced through the actions context independently — `<ReplPreview/>`
+  // needs the import map inlined in the iframe srcdoc; `<EditorHost/>` only
+  // needs `types`. Sync-on-first-render for fully-sync bundles; promise-typed
+  // inputs flow through the effect.
+  const isVendorThenable = isThenable<VendorBundle | { default: VendorBundle }>(vendorProp);
+  const initialImportMap: ImportMap | null =
+    !isVendorThenable && isPlainImportMap(vendorProp.importMap) ? vendorProp.importMap : null;
+  const initialTypes: VendorBundle['types'] | undefined = isVendorThenable
+    ? undefined
+    : vendorProp.types;
+
+  const [importMap, setImportMap] = useState<ImportMap | null>(initialImportMap);
+  const [types, setTypes] = useState<VendorBundle['types'] | undefined>(initialTypes);
+  // True once the bundle has been resolved (sync prop OR promise fulfilled).
+  // Subsequent prop changes warn in dev and are ignored — vendor is boot-time
+  // only, like `entry` et al.
+  const latchedRef = useRef<boolean>(initialImportMap !== null);
 
   useEffect(() => {
-    if (latchedSourceRef.current !== undefined) {
-      if (process.env.NODE_ENV !== 'production' && vendorProp !== latchedSourceRef.current) {
+    if (latchedRef.current) {
+      if (process.env.NODE_ENV !== 'production') {
         // eslint-disable-next-line no-console
         console.warn(
           '[mini-react-repl] <ReplProvider/> received a new `vendor` prop after first resolution. ' +
@@ -286,15 +277,20 @@ export function ReplProvider(props: ReplProviderProps): React.ReactElement {
         }. Preview will stay in its pending placeholder; pass a resolved vendor (or a promise that resolves) to recover.`,
       );
     };
+
     const finish = (bundle: VendorBundle): void => {
+      if (cancelled) return;
+      // Surface `types` immediately so `<EditorHost/>` can start the .d.ts
+      // download in parallel with the import-map resolution. useState's
+      // functional setter is needed because `bundle.types` itself may be
+      // a function thunk, which the plain `setTypes(bundle.types)` form
+      // would call as an updater.
+      if (bundle.types) setTypes(() => bundle.types);
       const importMapResult = resolveImportMap(bundle.importMap);
-      const settle = (importMap: ImportMap): void => {
+      const settle = (map: ImportMap): void => {
         if (cancelled) return;
-        latchedSourceRef.current = vendorProp;
-        setResolvedVendor({
-          importMap,
-          ...(bundle.types ? { types: bundle.types } : {}),
-        });
+        latchedRef.current = true;
+        setImportMap(map);
       };
       if (isPlainImportMap(importMapResult)) {
         settle(importMapResult);
@@ -303,7 +299,7 @@ export function ReplProvider(props: ReplProviderProps): React.ReactElement {
       importMapResult.then(settle, (err) => onError('vendor.importMap promise', err));
     };
 
-    if (!isThenable<VendorBundle | { default: VendorBundle }>(vendorProp)) {
+    if (!isVendorThenable) {
       finish(vendorProp);
       return () => {
         cancelled = true;
@@ -319,13 +315,15 @@ export function ReplProvider(props: ReplProviderProps): React.ReactElement {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vendorProp]);
 
-  return <ReplProviderInner {...props} vendor={resolvedVendor} />;
+  return <ReplProviderInner {...props} importMap={importMap} types={types} />;
 }
 
 type ReplProviderInnerProps = Omit<ReplProviderProps, 'vendor'> & {
-  vendor: ResolvedVendorBundle | null;
+  importMap: ImportMap | null;
+  types: VendorBundle['types'] | undefined;
 };
 
 function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
@@ -463,7 +461,8 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
   const actions = useMemo<ReplActionsContextValue>(
     () => ({
       entry: bootConfig.entry,
-      vendor: props.vendor,
+      importMap: props.importMap,
+      types: props.types,
       swcWasmUrl: bootConfig.swcWasmUrl,
       loader: bootConfig.loader,
       virtualModules: bootConfig.virtualModules,
@@ -479,7 +478,8 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
     }),
     [
       bootConfig,
-      props.vendor,
+      props.importMap,
+      props.types,
       setActivePath,
       setFile,
       removeFile,

@@ -38,14 +38,6 @@ export type TransformClientOptions = {
   swcWasmUrl?: string;
   /** Idle ms before transforming after the latest `setFile` call. */
   debounceMs?: number;
-  /** Called when a module is ready for the iframe. */
-  onModule: (mod: ModulePayload) => void;
-  /** Called when a CSS file's content changes. */
-  onCssUpsert: (path: string, css: string) => void;
-  /** Called when a CSS file is removed. */
-  onCssRemove: (path: string) => void;
-  /** Called when a transform or resolve fails. */
-  onError: (err: TransformError) => void;
   /**
    * Per-file pre-processor. Defaults to {@link defaultLoader} (which
    * implements `.css` → `<style>`, `.tsx`/`.ts`/`.jsx`/`.js` → swc,
@@ -66,6 +58,23 @@ export type TransformClientOptions = {
    * touch virtuals.
    */
   virtualModules?: Record<string, string>;
+};
+
+/**
+ * Per-iframe output sink. Attached via {@link TransformClient.attachSession}
+ * for the lifetime of a single iframe boot; detached when the iframe
+ * unmounts. The client itself outlives any individual session — the worker
+ * + wasm + virtual-module compilation are reusable across attaches.
+ */
+export type SessionHandlers = {
+  /** Called when a module is ready for the iframe. */
+  onModule: (mod: ModulePayload) => void;
+  /** Called when a CSS file's content changes. */
+  onCssUpsert: (path: string, css: string) => void;
+  /** Called when a CSS file is removed. */
+  onCssRemove: (path: string) => void;
+  /** Called when a transform or resolve fails. */
+  onError: (err: TransformError) => void;
 };
 
 /** A resettable, debounced transform driver. */
@@ -94,10 +103,36 @@ export class TransformClient {
    */
   private readonly virtualSources: Record<string, string>;
   private readonly virtualAliases: ReadonlySet<string>;
+  /**
+   * The currently attached iframe's output sink. `null` whenever the
+   * client is idle between iframe attaches (or before the first one).
+   * `prewarm()` and the worker init handshake do not require a session;
+   * `transformAll` / `processOne` are only called from inside an attached
+   * session, so a `null` slot during a transform is a wiring bug — we
+   * route emissions through `this.session?.onX(...)` defensively.
+   */
+  private session: SessionHandlers | null = null;
 
   constructor(private readonly opts: TransformClientOptions) {
     this.virtualSources = opts.virtualModules ?? {};
     this.virtualAliases = new Set(Object.keys(this.virtualSources));
+  }
+
+  /**
+   * Attach an iframe's output sink for the duration of one iframe boot.
+   * Returns a `{ detach }` handle the caller invokes on iframe teardown.
+   *
+   * Replaces any existing session (matches the previous setupIframe-owned
+   * client model). Detach is a no-op if a newer session has already
+   * attached, so callers can call it unconditionally from cleanup.
+   */
+  attachSession(handlers: SessionHandlers): { detach: () => void } {
+    this.session = handlers;
+    return {
+      detach: () => {
+        if (this.session === handlers) this.session = null;
+      },
+    };
   }
 
   /**
@@ -234,7 +269,7 @@ export class TransformClient {
       if (!m) continue;
       try {
         const rewritten = rewriteImports(path, m.code, this.files, this.virtualAliases);
-        this.opts.onModule({
+        this.session?.onModule({
           path,
           code: rewritten.code,
           deps: rewritten.deps,
@@ -272,7 +307,7 @@ export class TransformClient {
       }
       await initLexer();
       const rewritten = rewriteImports(path, result.code, this.files, this.virtualAliases);
-      this.opts.onModule({
+      this.session?.onModule({
         path,
         code: rewritten.code,
         deps: rewritten.deps,
@@ -289,17 +324,19 @@ export class TransformClient {
 
   private upsertCss(path: string, css: string): void {
     this.cssPaths.add(path);
-    this.opts.onCssUpsert(path, css);
+    this.session?.onCssUpsert(path, css);
   }
 
   private removeCss(path: string): void {
     this.cssPaths.delete(path);
-    this.opts.onCssRemove(path);
+    this.session?.onCssRemove(path);
   }
 
   private reportError(err: unknown, path: string): void {
+    const sink = this.session;
+    if (!sink) return;
     if (err instanceof ResolveError) {
-      this.opts.onError({
+      sink.onError({
         kind: 'resolve',
         path: err.path,
         message: err.message,
@@ -308,7 +345,7 @@ export class TransformClient {
       return;
     }
     if (isTransformError(err)) {
-      this.opts.onError({
+      sink.onError({
         kind: 'transform',
         path: err.path,
         message: err.message,
@@ -316,7 +353,7 @@ export class TransformClient {
       });
       return;
     }
-    this.opts.onError({
+    sink.onError({
       kind: 'transform',
       path,
       message: err instanceof Error ? err.message : String(err),
@@ -423,6 +460,22 @@ export class TransformClient {
       };
       pending.reject(err);
     }
+  }
+
+  /**
+   * Eagerly construct + initialize the worker (downloads the worker JS
+   * chunk and swc-wasm bytes, runs the init handshake). Safe to call
+   * before any transforms. Lets callers overlap the worker boot with
+   * other work — e.g. `<ReplPreview/>` calls it right after the iframe
+   * element is attached so wasm downloads in parallel with the iframe's
+   * runtime + vendor data:-URL phase instead of sitting at the very end
+   * of the network waterfall.
+   *
+   * Errors are not thrown here — they surface on the real `transformAll`
+   * call via the shared `workerReady` promise.
+   */
+  prewarm(): Promise<void> {
+    return this.ensureWorker();
   }
 
   /** Stop processing and terminate the worker. */

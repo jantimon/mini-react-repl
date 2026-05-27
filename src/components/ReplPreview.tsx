@@ -16,7 +16,7 @@
  * @public
  */
 
-import { useCallback, useContext, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { ReplActionsContext, ReplStateContext } from './context.ts';
 import { generatePreviewHtml } from '../preview-html.ts';
 import {
@@ -71,7 +71,21 @@ export type ReplPreviewProps = {
   style?: React.CSSProperties;
 };
 
+/**
+ * Public wrapper. Re-keys the inner component on every `reloadPreview()` so
+ * a hard reload tears down the {@link TransformClient} + worker and mounts
+ * a fresh one (the documented recovery hatch). Boot config — `swcWasmUrl`,
+ * `loader`, `virtualModules` — is documented as boot-time-only and not
+ * included in the key; consumers who need to change it must remount the
+ * provider via the documented `key` escape hatch.
+ */
 export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
+  const state = useContext(ReplStateContext);
+  if (!state) throw new Error('<ReplPreview/> must be inside <ReplProvider/>');
+  return <ReplPreviewInner key={state.previewReloadKey} {...props} />;
+}
+
+function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
   const state = useContext(ReplStateContext);
   const actions = useContext(ReplActionsContext);
   if (!state || !actions) throw new Error('<ReplPreview/> must be inside <ReplProvider/>');
@@ -82,7 +96,7 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
   const loader = actions.loader;
   const virtualModulesRaw = actions.virtualModules;
   const customShell = actions.shell;
-  const vendor = actions.vendor;
+  const importMap = actions.importMap;
 
   // The iframe runtime mounts a synthetic shell module — never the user's
   // entry directly. `filesForEngine` is the engine-side file table (user
@@ -101,45 +115,81 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
   const onMountedRef = useRef(props.onMounted);
   onMountedRef.current = props.onMounted;
   // Stash the consumer's iframeRef so its identity changes don't churn the
-  // heavy iframe lifecycle below. Forwarding happens inside `setupIframe`
-  // so consumers see the iframe attached at ref-phase timing (before the
-  // first useLayoutEffect), matching the contract of a normal forwarded ref.
+  // iframe lifecycle below. Forwarding happens inside `setupIframe` so
+  // consumers see the iframe attached at ref-phase timing (before the first
+  // useLayoutEffect), matching the contract of a normal forwarded ref.
   const iframeRefBox = useRef(props.iframeRef);
   iframeRefBox.current = props.iframeRef;
 
-  // The TransformClient is created inside the iframe-lifecycle ref callback
-  // and shared with the file-sync effect via this ref. The setLastError
-  // closure is captured here once — `actions` is stable for the provider's
-  // lifetime, so this cap doesn't churn.
-  const clientRef = useRef<TransformClient | null>(null);
+  // `TransformClient` lives for the entire inner mount, owning the worker
+  // across iframe attach cycles. Created inside `useEffect` (not `useState`
+  // init) so React 18 strict mode's simulated unmount/remount disposes the
+  // first instance cleanly and the remount produces a fresh one — useState
+  // init would only run once, leaving a disposed client in state.
+  //
+  // `prewarm()` is called immediately so worker.js + swc-wasm download in
+  // parallel with vendor resolution — independent of when `actions.importMap`
+  // lands. Pure side effect on the network; the eventual session's
+  // `transformAll()` reuses the cached `workerReady` promise.
+  const [client, setClient] = useState<TransformClient | null>(null);
+  useEffect(() => {
+    const c = new TransformClient({
+      ...(swcWasmUrl ? { swcWasmUrl } : {}),
+      ...(loader ? { loader } : {}),
+      ...(Object.keys(virtualModulesRaw).length > 0 ? { virtualModules: virtualModulesRaw } : {}),
+    });
+    void c.prewarm().catch(() => {});
+    setClient(c);
+    return () => {
+      c.dispose();
+      setClient((cur) => (cur === c ? null : cur));
+    };
+    // Boot config is documented boot-time-only — consumers must remount the
+    // provider (via `key`) to change it. Including these in deps would cause
+    // a fresh client + worker on every consumer render if they pass inline
+    // objects/functions.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Tracks the active iframe session's client for the `syncFiles` effect
+  // below — null between iframe attaches, set during a session. Mirrors the
+  // pre-refactor "syncFiles only fires when an iframe is attached" semantic
+  // by gating on this ref rather than on `filesForEngine`'s deps.
+  const sessionClientRef = useRef<TransformClient | null>(null);
 
   // Memoize srcdoc so file edits don't recompute / remount the iframe.
-  // `vendor` is latched on first resolution in `<ReplProvider/>` (may be null
-  // while a promise-typed vendor is pending); when null we render a
-  // placeholder instead of an iframe and skip srcdoc generation entirely.
+  // Gated on both `importMap` (needed for the inlined `<script type="importmap">`)
+  // and `client` (the worker that compiles user code once the iframe sends
+  // `ready`). When either is missing we render a placeholder so the iframe
+  // mount + `setupIframe` fire only when there's a real client to attach.
   const srcdoc = useMemo(
     () =>
-      vendor === null
+      importMap === null || client === null
         ? null
         : generatePreviewHtml({
-            vendor,
+            importMap,
             ...(props.headHtml !== undefined ? { headHtml: props.headHtml } : {}),
             ...(props.bodyHtml !== undefined ? { bodyHtml: props.bodyHtml } : {}),
             showErrorOverlay: showOverlay,
           }),
-    [vendor, props.headHtml, props.bodyHtml, showOverlay],
+    [importMap, client, props.headHtml, props.bodyHtml, showOverlay],
   );
 
-  // React 19 callback ref with cleanup. When `srcdoc` (or any dep) changes,
-  // React fires the previous ref's cleanup (disposes the client + listener)
-  // and re-invokes this callback with the same iframe element. No `key`
-  // needed; the dep change drives the lifecycle.
+  // React 19 callback ref with cleanup. Synchronous with iframe mount/unmount —
+  // listener and session are attached at the same time the `<iframe>` enters
+  // the DOM, so there is no window where the iframe could send `ready` before
+  // we're listening for it.
   const setupIframe = useCallback(
-    (iframe: HTMLIFrameElement | null) => {
+    (iframe: HTMLIFrameElement) => {
+      // The iframe element only renders when both `client` and `importMap`
+      // are non-null (see `srcdoc` memo above), so this guard is defensive —
+      // it can't fire in practice, but it lets TypeScript narrow `client`
+      // for the rest of the callback.
+      if (!client) return;
       // Forward to the consumer's iframeRef. Read via the ref box so this
       // callback's deps don't include `props.iframeRef` (which would tear
-      // down + re-create the transform client on every consumer render
-      // when an inline callback ref is used).
+      // down + re-attach the session on every consumer render when an
+      // inline callback ref is used).
       const userRef = iframeRefBox.current;
       let detachUserRef: (() => void) | undefined;
       if (userRef) {
@@ -156,12 +206,12 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
         }
       }
 
-      // Publish the iframe to the provider-shared registry so siblings
-      // like `<InspectMode/>` can find it.
+      // Publish to the provider-shared registry so siblings like
+      // `<InspectMode/>` can find the live iframe.
       actions.iframeRegistry.setIframe(iframe);
 
-      if (!iframe) return detachUserRef;
-
+      // Per-iframe boot-protocol state. Lives in this callback's closure and
+      // is referenced by the session handlers + message listener.
       let disposed = false;
       let booted = false;
       let ready = false;
@@ -209,10 +259,7 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
         }
       };
 
-      const client = new TransformClient({
-        ...(swcWasmUrl ? { swcWasmUrl } : {}),
-        ...(loader ? { loader } : {}),
-        ...(Object.keys(virtualModulesRaw).length > 0 ? { virtualModules: virtualModulesRaw } : {}),
+      const { detach } = client.attachSession({
         onModule: (m) => {
           if (!booted) {
             collected.push(m);
@@ -230,7 +277,7 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
         onCssRemove: (path) => send({ kind: 'css-remove', path }),
         onError: handleClientError,
       });
-      clientRef.current = client;
+      sessionClientRef.current = client;
 
       const onMessage = async (event: MessageEvent) => {
         const data = event.data;
@@ -281,32 +328,30 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
       return () => {
         disposed = true;
         window.removeEventListener('message', onMessage);
-        client.dispose();
-        if (clientRef.current === client) clientRef.current = null;
+        detach();
+        if (sessionClientRef.current === client) sessionClientRef.current = null;
         actions.iframeRegistry.setIframe(null);
         detachUserRef?.();
       };
     },
-    [srcdoc, entry, swcWasmUrl, loader, virtualModulesRaw, setLastError],
+    [client, actions.iframeRegistry, setLastError],
   );
 
-  // Forward file changes into the live transform client. Waits until the
-  // boot message has flushed so we don't double-process the cold set.
-  // `filesForEngine` already wraps `state.files` with the synthetic shell, so
-  // it changes on user edits and (defensively) on shell-source changes too.
+  // Forward file changes into the live transform client. Gated on
+  // `sessionClientRef` so pre-iframe-mount edits (no session attached yet)
+  // are dropped — the eventual session's cold-boot path picks up the
+  // latest `filesForEngine` via `filesForEngineRef` instead.
   useEffect(() => {
-    clientRef.current?.syncFiles(filesForEngine);
+    sessionClientRef.current?.syncFiles(filesForEngine);
   }, [filesForEngine]);
 
   return (
     <div className={`repl-preview ${props.className ?? ''}`} style={props.style}>
       {srcdoc === null ? (
-        // Vendor promise still pending. Render a same-shape placeholder so
-        // layout doesn't shift when the iframe lands. `repl-preview` already
-        // paints the background; this empty div fills the slot and carries
-        // an `aria-busy` hint for AT. Uses a distinct class from the real
-        // iframe so `page.frameLocator('.repl-iframe')` doesn't latch onto
-        // the placeholder during the vendor-pending window.
+        // ImportMap still pending. Render a same-shape placeholder so layout
+        // doesn't shift when the iframe lands. Uses a distinct class from the
+        // real iframe so `page.frameLocator('.repl-iframe')` doesn't latch
+        // onto the placeholder during the importMap-pending window.
         <div
           className="repl-iframe-placeholder"
           aria-busy="true"
@@ -314,12 +359,6 @@ export function ReplPreview(props: ReplPreviewProps): React.ReactElement {
         />
       ) : (
         <iframe
-          // `previewReloadKey` is bumped by `reloadPreview()` from `useRepl()`.
-          // Changing the key forces React to unmount the iframe element and
-          // mount a fresh one, which tears down the old TransformClient via
-          // `setupIframe`'s cleanup and runs the cold-boot path again — the
-          // recovery hatch when user code crashes past what HMR can rescue.
-          key={state.previewReloadKey}
           ref={setupIframe}
           className="repl-iframe"
           srcDoc={srcdoc}

@@ -6,7 +6,9 @@ All notable changes to `mini-react-repl`. Dates are YYYY-MM-DD.
 
 ### Changed (breaking)
 
-- `repl-vendor-build` now writes a **folder**, not a single JSON. The folder contains a thin `index.ts` exporting a ready-to-use `customVendor: VendorBundle` plus two leaf JSONs (`import-map.json`, `types.json`). The generated `index.ts` consumes **both** payloads through dynamic `import()`, so bundlers (Vite/Webpack/Rolldown) code-split each into its own chunk. Routes that never mount `<Repl/>` ship neither.
+- **swc-wasm prewarms on `<ReplPreview/>` mount.** The worker JS chunk and `wasm_bg.wasm` now start downloading as soon as the preview component mounts, in parallel with vendor / import-map resolution and the iframe boot. Previously the worker was constructed inside the iframe's ref callback, so wasm queued behind the entire iframe-runtime + vendor `data:` URL boot, landing last in the waterfall. Universal across vendor input shapes — including Promise-typed `vendor={import('./vendor')}` consumers, where wasm previously waited for the vendor promise + import-map to both resolve.
+- **`TransformClient` API**: output callbacks moved off the constructor onto a new `attachSession(handlers)` method, which returns a `{ detach }` handle. `TransformClientOptions` keeps only boot config (`swcWasmUrl`, `loader`, `virtualModules`, `debounceMs`). A new `prewarm(): Promise<void>` triggers worker + wasm download without an attached session. Direct callers of `new TransformClient(...)` must migrate to the two-step (`new TransformClient(opts)` → `attachSession({...})`).
+- **`ResolvedVendorBundle` removed from the public surface.** It carried a `types` field that was no longer read by anyone after the 0.16.0 import-map lazy-load. `generatePreviewHtml({ vendor: { importMap, ... } })` becomes `generatePreviewHtml({ importMap, ... })` — pass the import map directly. `<Repl/>` / `<ReplProvider/>` props are unchanged.
 - `--out` now takes a directory. When omitted, the CLI derives `<entry-dir>/<entry-stem>.generated/` from the entry path (any JS/TS extension is accepted; the `.entry.` infix is stripped if present, so `vendor.entry.ts` and `vendor.ts` both produce `vendor.generated/`). The `.generated` suffix is matched by most default ignore globs (Prettier, oxlint, Knip) so existing CI does not need to allow-list it. Pass `--out <dir>` to override.
 - The single-file output from 0.15.0 is gone. There is no flag to restore it. The folder is the only output shape.
 - `VendorBundle.importMap` is now a union: it accepts a sync `ImportMap`, a `Promise<ImportMap | { default: ImportMap }>`, **or** a thunk returning either. The generator emits the thunk form (with an SSR window-guard) so the host bundle never inlines vendor data. `<ReplProvider/>` resolves the thunk on `<Repl/>` mount; the iframe boots once it lands. Direct callers of `mini-react-repl/preview-html`'s `generatePreviewHtml({ vendor })` must still pass a resolved bundle (sync `importMap`) — the new exported `ResolvedVendorBundle` names this shape.
@@ -22,6 +24,17 @@ All notable changes to `mini-react-repl`. Dates are YYYY-MM-DD.
    + import { customVendor as vendor } from './vendor/vendor.generated';
    ```
 3. `.gitignore` the new folder and delete the old `repl.vendor.json`.
+4. Direct callers of `generatePreviewHtml`:
+   ```diff
+   - generatePreviewHtml({ vendor: { importMap } });
+   + generatePreviewHtml({ importMap });
+   ```
+5. Direct callers of `new TransformClient({...})`:
+   ```diff
+   - const client = new TransformClient({ swcWasmUrl, onModule, onCssUpsert, onCssRemove, onError });
+   + const client = new TransformClient({ swcWasmUrl });
+   + const { detach } = client.attachSession({ onModule, onCssUpsert, onCssRemove, onError });
+   ```
 
 ### Why
 

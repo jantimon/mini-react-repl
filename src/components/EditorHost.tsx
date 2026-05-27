@@ -50,9 +50,11 @@ export function EditorHost(props: EditorHostProps): React.ReactElement | null {
   // expensive work (dynamic-import of an inlined .d.ts chunk, fetch of a
   // hosted `repl.types.json`) until an editor actually mounts. We invoke the
   // function here, inside the effect, so REPL-only / no-editor consumers
-  // never trigger it. `actions.vendor` may be null until a promise-typed
-  // vendor lands; the editor mounts without types and rebinds when it does.
-  const rawTypes = actions.vendor?.types;
+  // never trigger it. `actions.types` is set as soon as the outer vendor
+  // bundle is in hand — *before* `vendor.importMap` resolves — so the
+  // `.d.ts` chunk downloads in parallel with the import-map chunk instead of
+  // serializing behind it.
+  const rawTypes = actions.types;
   const [types, setTypes] = useState<TypeBundle | undefined>(() =>
     isResolvedTypes(rawTypes) ? rawTypes : undefined,
   );

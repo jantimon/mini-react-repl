@@ -56,20 +56,6 @@ export type VendorBundle = {
 };
 
 /**
- * Fully-resolved {@link VendorBundle} as seen by internal consumers
- * (`<ReplPreview/>`, `generatePreviewHtml()`). The `importMap` is sync
- * because the host has already awaited it; `types` stays lazy because
- * the editor adapter resolves it on its own timeline.
- *
- * Exported so `generatePreviewHtml` can keep its sync signature — pass a
- * resolved bundle (or just `{ importMap: ... }`) in.
- */
-export type ResolvedVendorBundle = {
-  importMap: ImportMap;
-  types?: VendorBundle['types'];
-};
-
-/**
  * `.d.ts` payload bundled alongside a {@link VendorBundle}.
  *
  * Each entry is a single `.d.ts` file string keyed by the URI under which

@@ -17,10 +17,11 @@
 import { createContext } from 'react';
 import type {
   Files,
+  ImportMap,
   LanguageMap,
-  ResolvedVendorBundle,
   ReplError,
   ReplLoader,
+  VendorBundle,
   VirtualModules,
 } from '../types.ts';
 
@@ -72,14 +73,21 @@ export type ReplActionsContextValue = {
   /** Logical entry path (snapshotted on first mount). */
   entry: string;
   /**
-   * Vendor bundle, fully resolved (sync `importMap`). `null` until both the
-   * outer `vendor` prop AND its `importMap` have resolved; set exactly once
-   * thereafter (subsequent prop changes warn in dev and are ignored, matching
-   * the boot-time semantics of {@link entry} et al). Consumers that need
-   * vendor (`<ReplPreview/>`, `<EditorHost/>`) must tolerate the `null`
-   * interim and render a placeholder until it lands.
+   * Resolved import map. `null` until both the outer `vendor` prop AND its
+   * `importMap` have resolved; set exactly once thereafter (subsequent prop
+   * changes warn in dev and are ignored, matching the boot-time semantics
+   * of {@link entry} et al). `<ReplPreview/>` inlines this into the iframe
+   * srcdoc; until it lands, the preview shows a sized placeholder.
    */
-  vendor: ResolvedVendorBundle | null;
+  importMap: ImportMap | null;
+  /**
+   * The `vendor.types` thunk / value, surfaced as soon as the outer vendor
+   * bundle is resolved — *before* `vendor.importMap` finishes resolving.
+   * `<EditorHost/>` reads this so the `.d.ts` chunk can download in parallel
+   * with the import-map chunk instead of serializing behind it. `undefined`
+   * when the bundle has no `types` field or hasn't been resolved yet.
+   */
+  types: VendorBundle['types'] | undefined;
   /** swc-wasm URL override (snapshotted on first mount). */
   swcWasmUrl: string | undefined;
   /** Optional file pre-processor (snapshotted on first mount). */
