@@ -193,7 +193,7 @@ export class TransformClient {
         id,
         path,
         source,
-        ...(tsx !== undefined ? { tsx } : {}),
+        tsx,
       });
     });
   }
@@ -250,7 +250,7 @@ export class TransformClient {
         kind: 'transform',
         path: msg.path,
         message: msg.message,
-        ...(msg.loc ? { loc: msg.loc } : {}),
+        loc: msg.loc,
       };
       pending.reject(err);
     }
@@ -500,7 +500,7 @@ export class TransformSession {
         kind: 'transform',
         path: err.path,
         message: err.message,
-        ...(err.loc ? { loc: err.loc } : {}),
+        loc: err.loc,
       });
       return;
     }

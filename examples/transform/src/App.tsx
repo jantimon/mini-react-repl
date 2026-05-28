@@ -35,7 +35,7 @@ const vendor: VendorBundle = {
   types: async () => {
     const base = await baseTypes();
     return {
-      libs: [...base.libs, { path: 'file:///loader-ambient.d.ts', content: LOADER_AMBIENT_TYPES }],
+      libs: { ...base.libs, 'file:///loader-ambient.d.ts': LOADER_AMBIENT_TYPES },
     };
   },
 };

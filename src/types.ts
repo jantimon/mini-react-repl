@@ -61,8 +61,8 @@ export type VendorBundle = {
  * inside the bundle resolve naturally.
  */
 export type TypeBundle = {
-  /** Flat list of `.d.ts` files keyed by their registration URI. */
-  libs: Array<{ path: string; content: string }>;
+  /** `.d.ts` files keyed by their registration URI. */
+  libs: Record<string, string>;
 };
 
 /** A standard W3C import-map. */

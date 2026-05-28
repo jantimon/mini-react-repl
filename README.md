@@ -22,19 +22,17 @@ import { defaultVendor } from 'mini-react-repl/vendor-default';
 import { MonacoReplEditor } from 'mini-react-repl/editor-monaco';
 import 'mini-react-repl/theme.css';
 
-const HELLO = {
-  'App.tsx': 'export default () => <h1>hi</h1>',
-};
-
 export default function Playground() {
-  const [files, setFiles] = useState(HELLO);
+  const [files, setFiles] = useState({
+    'App.tsx': 'export default () => <h1>hi</h1>',
+  });
   return (
-    <Repl editor={MonacoReplEditor} files={files} onFilesChange={setFiles} vendor={defaultVendor} />
+    <Repl editor={MonacoReplEditor} vendor={defaultVendor} files={files} onFilesChange={setFiles} />
   );
 }
 ```
 
-That's the whole thing. Editor + secure live preview, multi-file, real React Fast
+That's the whole thing. Editor + sandboxed live preview, multi-file, real React Fast
 Refresh, no backend, no SSR, no server-side bundling.
 
 ---

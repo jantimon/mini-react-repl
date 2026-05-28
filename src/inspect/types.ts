@@ -56,19 +56,3 @@ export type ElementPick = {
   };
   stack: StackFrame[];
 };
-
-/**
- * postMessage envelopes exchanged between host and the in-iframe picker.
- * All envelopes carry the same `__repl: true` discriminator the rest of
- * the runtime uses (see SPEC §8.4).
- *
- * @internal
- */
-export type InspectToIframe =
-  | { kind: 'inspect:enable'; overlayClassName?: string }
-  | { kind: 'inspect:disable' };
-
-/** @internal */
-export type InspectFromIframe =
-  | { kind: 'inspect:pick'; pick: ElementPick }
-  | { kind: 'inspect:cancel' };

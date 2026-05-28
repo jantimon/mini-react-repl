@@ -62,8 +62,9 @@ let typeFiles = 0;
 try {
   await stat(typesPath);
   const types = JSON.parse(await readFile(typesPath, 'utf8'));
-  typesBytes = types.libs.reduce((n, l) => n + l.content.length, 0);
-  typeFiles = types.libs.length;
+  const entries = Object.values(types.libs);
+  typesBytes = entries.reduce((n, content) => n + content.length, 0);
+  typeFiles = entries.length;
 } catch {
   // --no-types path: no summary line.
 }

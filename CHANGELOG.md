@@ -2,6 +2,42 @@
 
 All notable changes to `mini-react-repl`. Dates are YYYY-MM-DD.
 
+## 0.19.0 — 2026-05-28
+
+### Changed (breaking)
+
+- **`TypeBundle.libs` is now `Record<string, string>` (path → content)
+  instead of `Array<{ path: string; content: string }>`.** The old shape
+  allowed duplicate paths at the type level even though `repl-vendor-build`
+  always emitted unique paths (deduped via the internal `seen: Set`) and
+  the Monaco adapter ref-counted by path. The new shape encodes that
+  invariant in the type system, shaves ~22 bytes of structural overhead
+  per entry from the wire format (small but real on a ~2 MB types
+  payload), and replaces `Array.prototype.find`-style lookups with O(1)
+  property access. Migration:
+
+  ```ts
+  // before
+  const types: TypeBundle = {
+    libs: [
+      { path: 'file:///node_modules/foo/index.d.ts', content: '...' },
+      { path: 'file:///loader-ambient.d.ts', content: '...' },
+    ],
+  };
+  // after
+  const types: TypeBundle = {
+    libs: {
+      'file:///node_modules/foo/index.d.ts': '...',
+      'file:///loader-ambient.d.ts': '...',
+    },
+  };
+  ```
+
+  Bundles built with `repl-vendor-build` regenerate to the new shape on
+  next run; consumers that wrap or extend `vendor.types` (e.g. the
+  `examples/transform` pattern that merges in an ambient `.d.ts` for a
+  loader) need to spread the object literal instead of the array.
+
 ## 0.18.0 — 2026-05-27
 
 ### Changed

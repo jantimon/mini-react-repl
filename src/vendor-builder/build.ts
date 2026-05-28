@@ -523,7 +523,7 @@ async function collectTypes(packages: string[], cwd: string): Promise<TypeBundle
   // Track packages whose synthetic `package.json` shim has been emitted, so
   // walking multiple subpaths of the same package only yields one shim.
   const packageJsonEmitted = new Set<string>();
-  const libs: Array<{ path: string; content: string }> = [];
+  const libs: Record<string, string> = {};
 
   for (const spec of packages) {
     await walkSpec(spec, rootReq, seen, packageJsonEmitted, libs);
@@ -538,7 +538,7 @@ async function walkSpec(
   req: NodeRequire,
   seen: Set<string>,
   packageJsonEmitted: Set<string>,
-  libs: Array<{ path: string; content: string }>,
+  libs: Record<string, string>,
 ): Promise<void> {
   const entry = await resolveTypesEntry(spec, req);
   if (!entry) {
@@ -557,9 +557,9 @@ async function walkSpec(
     const relTypes = normalizeDtsPath(
       relative(entry.ownerRoot, entry.absPath).split('\\').join('/'),
     );
-    libs.push({
-      path: `file:///node_modules/${entry.ownerPkg}/package.json`,
-      content: JSON.stringify({ name: entry.ownerPkg, types: `./${relTypes}` }),
+    libs[`file:///node_modules/${entry.ownerPkg}/package.json`] = JSON.stringify({
+      name: entry.ownerPkg,
+      types: `./${relTypes}`,
     });
   }
   await walkFile(entry.absPath, entry.ownerPkg, entry.ownerRoot, seen, packageJsonEmitted, libs);
@@ -665,7 +665,7 @@ async function walkFile(
   ownerRoot: string,
   seen: Set<string>,
   packageJsonEmitted: Set<string>,
-  libs: Array<{ path: string; content: string }>,
+  libs: Record<string, string>,
 ): Promise<void> {
   if (seen.has(absPath)) return;
   seen.add(absPath);
@@ -673,7 +673,7 @@ async function walkFile(
   const content = await readFile(absPath, 'utf8');
   const rel = normalizeDtsPath(relative(ownerRoot, absPath).split('\\').join('/'));
   const uri = `file:///node_modules/${ownerPkg}/${rel}`;
-  libs.push({ path: uri, content });
+  libs[uri] = content;
 
   const imports = await extractImports(content);
   const refPaths = extractTripleSlashRefs(content);

@@ -131,7 +131,7 @@ Output folder layout:
     index.ts          ← exports \`<export-name>: VendorBundle\`, with lazy
                         importMap + lazy types (both via dynamic import)
     import-map.json   ← { imports: { 'react': 'data:...', ... } }
-    types.json        ← { libs: [...] }     (absent with --no-types)
+    types.json        ← { libs: { ... } }   (absent with --no-types)
 
 Consumer:
   import { customVendor } from './vendor.generated';
@@ -181,7 +181,7 @@ export function renderIndexTs(opts: { hasTypes: boolean; exportName: string }): 
       : import(/* webpackChunkName: "mini-react-repl-types" */ './types.json').then((m) => m.default),`
     : '';
   const emptyTypeConst = opts.hasTypes
-    ? `\nconst EMPTY_TYPE_BUNDLE: TypeBundle = { libs: [] };\n`
+    ? `\nconst EMPTY_TYPE_BUNDLE: TypeBundle = { libs: {} };\n`
     : '';
   const typeImports = opts.hasTypes
     ? 'ImportMap, TypeBundle, VendorBundle'

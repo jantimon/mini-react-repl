@@ -350,10 +350,6 @@ window.addEventListener('message', async (event: MessageEvent) => {
       void loadModule(msg.module);
       break;
     }
-    case 'unload': {
-      modules.delete(msg.path);
-      break;
-    }
     case 'css-upsert': {
       upsertCss(msg.path, msg.css);
       break;
@@ -367,7 +363,7 @@ window.addEventListener('message', async (event: MessageEvent) => {
         kind: 'transform',
         path: msg.path,
         message: msg.message,
-        ...(msg.loc ? { loc: msg.loc } : {}),
+        loc: msg.loc,
       });
       break;
     }
@@ -377,18 +373,6 @@ window.addEventListener('message', async (event: MessageEvent) => {
     }
     case 'clear-errors': {
       hideOverlay();
-      break;
-    }
-    case 'reset': {
-      if (root) {
-        root.unmount();
-        root = null;
-      }
-      modules.clear();
-      cssTags.forEach((t) => t.remove());
-      cssTags.clear();
-      hideOverlay();
-      entryPath = null;
       break;
     }
     case 'inspect:install': {

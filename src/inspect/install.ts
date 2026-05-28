@@ -14,6 +14,7 @@
  * @internal
  */
 
+import { isFromPreview } from '../components/host-message.ts';
 import { INSPECT_PICKER_CODE } from './picker.bundled.ts';
 
 const INSTALL_TIMEOUT_MS = 5_000;
@@ -41,7 +42,7 @@ export function ensurePickerInstalled(iframe: HTMLIFrameElement): Promise<boolea
 
   const promise = new Promise<boolean>((resolve) => {
     const onAck = (event: MessageEvent) => {
-      if (event.source !== win) return;
+      if (!isFromPreview(event, win)) return;
       const data = event.data as { __repl?: unknown; kind?: unknown } | null;
       if (!data || data.__repl !== true || data.kind !== 'inspect:installed') return;
       cleanup();

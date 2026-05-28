@@ -11,6 +11,7 @@
 
 import { useContext, useEffect, useState } from 'react';
 import { ReplActionsContext } from '../components/context.ts';
+import { isFromPreview } from '../components/host-message.ts';
 import { ensurePickerInstalled } from './install.ts';
 import type { ElementPick } from './types.ts';
 
@@ -21,7 +22,14 @@ export type InspectModeProps = {
    * Toggling is cheap and reversible.
    */
   active: boolean;
-  /** Fires once per click on a fiber-bearing element. */
+  /**
+   * Fires once per click on a fiber-bearing element.
+   *
+   * NOTE: the `pick` originates in untrusted preview code. Its string
+   * fields (`dom.tag`, `dom.text`, each `stack[].fileName`, `componentName`)
+   * must be treated as adversarial — validate / escape before using them in
+   * navigation, `window.open`, `innerHTML`, etc.
+   */
   onElementPicked: (pick: ElementPick) => void;
   /**
    * Fires when the user presses Escape while picking. Use this to drive
@@ -35,6 +43,29 @@ export type InspectModeProps = {
    */
   overlayClassName?: string;
 };
+
+/**
+ * Minimal shape check for a `pick` arriving over postMessage. The payload
+ * comes from untrusted preview code, so confirm the structure a real
+ * `ElementPick` always carries before forwarding it to the consumer.
+ */
+function isValidPick(pick: unknown): pick is ElementPick {
+  if (
+    typeof pick !== 'object' ||
+    pick === null ||
+    !('stack' in pick) ||
+    !('dom' in pick) ||
+    !pick.stack ||
+    !pick.dom
+  )
+    return false;
+  return (
+    typeof pick.dom === 'object' &&
+    'tag' in pick.dom &&
+    typeof pick.dom.tag === 'string' &&
+    Array.isArray(pick.stack)
+  );
+}
 
 /**
  * Drive the in-iframe element picker from the React side. Renders nothing.
@@ -85,7 +116,7 @@ export function InspectMode(props: InspectModeProps): React.ReactElement | null 
         {
           __repl: true,
           kind: 'inspect:enable',
-          ...(overlayClassName !== undefined ? { overlayClassName } : {}),
+          overlayClassName,
         },
         '*',
       );
@@ -101,16 +132,17 @@ export function InspectMode(props: InspectModeProps): React.ReactElement | null 
   // a stale message from a pre-reload iframe from leaking into a newer
   // session.
   useEffect(() => {
+    if (!active) return undefined;
     function onMessage(event: MessageEvent) {
-      const data = event.data as { __repl?: unknown; kind?: unknown; pick?: ElementPick } | null;
+      const data = event.data as { __repl?: unknown; kind?: unknown; pick?: unknown } | null;
       if (!data || data.__repl !== true) return;
-      if (iframe && event.source !== iframe.contentWindow) return;
-      if (data.kind === 'inspect:pick' && data.pick) onElementPicked(data.pick);
+      if (!isFromPreview(event, iframe?.contentWindow)) return;
+      if (data.kind === 'inspect:pick' && isValidPick(data.pick)) onElementPicked(data.pick);
       else if (data.kind === 'inspect:cancel') onCancel?.();
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [iframe, onElementPicked, onCancel]);
+  }, [active, iframe, onElementPicked, onCancel]);
 
   return null;
 }

@@ -33,7 +33,6 @@ export type ToIframe =
       cssFiles: { path: string; css: string }[];
     }
   | { kind: 'load'; module: ModulePayload }
-  | { kind: 'unload'; path: string }
   | { kind: 'css-upsert'; path: string; css: string }
   | { kind: 'css-remove'; path: string }
   | {
@@ -44,7 +43,6 @@ export type ToIframe =
     }
   | { kind: 'resolve-error'; path: string; specifier: string }
   | { kind: 'clear-errors' }
-  | { kind: 'reset' }
   // Carries the picker bundle (ESM source) so the runtime can dynamic-import
   // it via a blob URL on first inspect activation. Sent by `<InspectMode/>`.
   | { kind: 'inspect:install'; code: string }
@@ -59,7 +57,6 @@ export type FromIframe =
   | { kind: 'ready' }
   | { kind: 'mounted' }
   | { kind: 'runtime-error'; message: string; stack: string }
-  | { kind: 'log'; level: 'log' | 'warn' | 'error'; args: unknown[] }
   // Ack for `inspect:install` — the picker has been dynamic-imported and its
   // message listener is live. Always sent, even if a prior install made this
   // call a no-op, so the host can chain `inspect:enable` after.

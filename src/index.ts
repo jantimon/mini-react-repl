@@ -31,7 +31,7 @@ export {
   type ColorSchemeWatcherProps,
 } from './ColorSchemeWatcher.tsx';
 export { useRepl, type UseReplReturn } from './hooks/useRepl.ts';
-export { useReplError } from './hooks/useReplError.ts';
+export { useReplError, type UseReplErrorReturn } from './hooks/useReplError.ts';
 export type {
   Files,
   VendorBundle,

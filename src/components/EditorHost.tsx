@@ -1,8 +1,8 @@
 /**
- * Internal: bridges an editor adapter (any component matching
- * {@link ReplEditorProps}) to the active file in context.
+ * Bridges an editor adapter (any component matching {@link ReplEditorProps})
+ * to the active file in context.
  *
- * @internal
+ * @public
  */
 
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
@@ -18,7 +18,9 @@ export type EditorHostProps = {
 };
 
 function isResolvedTypes(v: unknown): v is TypeBundle {
-  return v != null && typeof v === 'object' && Array.isArray((v as { libs?: unknown }).libs);
+  if (v == null || typeof v !== 'object') return false;
+  const libs = (v as { libs?: unknown }).libs;
+  return libs != null && typeof libs === 'object' && !Array.isArray(libs);
 }
 
 function extensionOf(path: string): string {

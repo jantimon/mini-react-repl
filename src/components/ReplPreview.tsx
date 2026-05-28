@@ -33,6 +33,7 @@ import {
 } from '../engine/transform-client.ts';
 import type { ToIframe, FromIframe } from '../runtime/protocol.ts';
 import type { ReplError } from '../types.ts';
+import { isFromPreview } from './host-message.ts';
 import { SHELL_PATH, withShellFile } from './shell.ts';
 
 /**
@@ -166,8 +167,8 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
     };
     const c = new TransformClient({
       ...(swcWasmUrl ? { swcWasmUrl } : {}),
-      ...(loader ? { loader } : {}),
-      ...(Object.keys(virtualModulesRaw).length > 0 ? { virtualModules: virtualModulesRaw } : {}),
+      loader,
+      virtualModules: virtualModulesRaw,
       onWorkerError: reportWorkerError,
     });
     void c.prewarm();
@@ -194,8 +195,8 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
         ? null
         : generatePreviewHtml({
             importMap,
-            ...(props.headHtml !== undefined ? { headHtml: props.headHtml } : {}),
-            ...(props.bodyHtml !== undefined ? { bodyHtml: props.bodyHtml } : {}),
+            headHtml: props.headHtml,
+            bodyHtml: props.bodyHtml,
             showErrorOverlay: showOverlay,
           }),
     [importMap, client, props.headHtml, props.bodyHtml, showOverlay],
@@ -288,7 +289,7 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
                   kind: 'transform',
                   path: e.path,
                   message: e.message,
-                  ...(e.loc ? { loc: e.loc } : {}),
+                  loc: e.loc,
                 };
           reportError(err);
           send(
@@ -298,7 +299,7 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
                   kind: 'transform-error',
                   path: e.path,
                   message: e.message,
-                  ...(e.loc ? { loc: e.loc } : {}),
+                  loc: e.loc,
                 },
           );
         },
@@ -308,10 +309,9 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
       const onMessage = async (event: MessageEvent) => {
         const data = event.data;
         if (!data || data.__repl !== true) return;
-        // Security invariant: reject any frame other than this iframe's
-        // window. Without this any other frame could spoof `__repl`
-        // envelopes.
-        if (event.source !== iframe.contentWindow) return;
+        // Security invariant: accept only this iframe's window, and only from
+        // the preview document's own (opaque) origin — see `isFromPreview`.
+        if (!isFromPreview(event, iframe.contentWindow)) return;
         const msg = data as FromIframe & { __repl: true };
         if (msg.kind === 'ready') {
           ready = true;
@@ -396,7 +396,7 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
           ref={setupIframe}
           className="repl-iframe"
           title="preview"
-          {...(sandbox !== undefined ? { sandbox } : {})}
+          sandbox={sandbox}
           allow={props.allow ?? ''}
           referrerPolicy={props.referrerPolicy ?? 'no-referrer'}
           // Inline so the iframe fills its container and drops the default

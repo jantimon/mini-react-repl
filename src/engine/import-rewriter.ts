@@ -47,23 +47,10 @@ export type RewriteResult = {
 };
 
 /**
- * Rewrite relative specifiers to blob URLs from `blobs`. Bare specifiers
- * are passed through unchanged (resolved by the iframe's import map).
- *
- * If a relative specifier targets a path not in `files`, throws a
- * {@link ResolveError} so the caller can surface it through the error overlay.
- *
- * @param fromPath logical path of the module being rewritten
- * @param code     transformed JS body (output of swc)
- * @param files    current file table (for existence checks)
- * @param blobs    logical path → current blob URL
- *
- * @throws {ResolveError} if a relative import does not resolve
- */
-/**
  * Walk the imports, normalize each relative specifier so it matches its
  * resolved target file's path with extension (e.g. `'./Counter'` →
- * `'./Counter.tsx'`), and report the deps.
+ * `'./Counter.tsx'`), and report the deps. Bare specifiers are passed
+ * through unchanged (resolved by the iframe's import map).
  *
  * The iframe runtime later does a literal string replace of each
  * (quoted) specifier with the current blob URL of its target. By
@@ -75,6 +62,13 @@ export type RewriteResult = {
  * iframe-minted blob URL of the virtual module (rather than going through
  * the import map). The literal text in `code` is left untouched, exactly
  * matching what `runtime.ts buildBlobUrl()` looks for when substituting.
+ *
+ * @param fromPath       logical path of the module being rewritten
+ * @param code           transformed JS body (output of swc)
+ * @param files          current file table (for existence checks)
+ * @param virtualAliases bare specifiers that resolve to virtual modules
+ *
+ * @throws {ResolveError} if a relative import does not resolve
  */
 export function rewriteImports(
   fromPath: string,

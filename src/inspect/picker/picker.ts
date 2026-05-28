@@ -22,7 +22,7 @@ import {
 import { destroyOverlay, moveOverlayTo } from './overlay.ts';
 import { isSourceCandidate, parseStack } from './parse-stack.ts';
 import { getModuleRecord } from './module-text.ts';
-import { clearTraceMapCache, invalidateTraceMap, lookupSourcePosition } from './source-map.ts';
+import { invalidateTraceMap, lookupSourcePosition } from './source-map.ts';
 
 type StackFrame = {
   fileName: string;
@@ -237,12 +237,4 @@ window.addEventListener('message', (event: MessageEvent) => {
 window.addEventListener('__repl:module-updated', (event) => {
   const detail = (event as CustomEvent<{ path?: string }>).detail;
   if (detail?.path) invalidateTraceMap(detail.path);
-});
-
-// On reset (the runtime drops every module record), wipe the whole cache.
-// We piggyback on the same message bus the runtime uses.
-window.addEventListener('message', (event: MessageEvent) => {
-  if (event.source !== window.parent) return;
-  const data = event.data as { __repl?: unknown; kind?: unknown } | null;
-  if (data?.__repl === true && data.kind === 'reset') clearTraceMapCache();
 });

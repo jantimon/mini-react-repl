@@ -307,9 +307,9 @@ export function MonacoReplEditor(props: MonacoReplEditorProps): React.ReactEleme
     const types: TypeBundle | undefined = props.types;
     if (!types) return;
     const acquired: string[] = [];
-    for (const lib of types.libs) {
-      acquireLib(lib.path, lib.content);
-      acquired.push(lib.path);
+    for (const [path, content] of Object.entries(types.libs)) {
+      acquireLib(path, content);
+      acquired.push(path);
     }
     return () => {
       for (const path of acquired) releaseLib(path);

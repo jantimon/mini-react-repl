@@ -67,7 +67,7 @@ export function invalidateTraceMap(path: string): void {
   cache.delete(path);
 }
 
-/** Strip every cached map. Useful on `reset`. */
+/** Strip every cached map. Used for test isolation. */
 export function clearTraceMapCache(): void {
   cache.clear();
 }
