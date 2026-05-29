@@ -1,11 +1,18 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { Repl, type Files } from 'mini-react-repl';
 import { defaultVendor } from 'mini-react-repl/vendor-default';
+import { createEsmShCdnHandler } from 'mini-react-repl/cdn-esmsh';
 import type { ElementPick } from 'mini-react-repl/inspect';
 import 'mini-react-repl/theme.css';
 import { FocusableMonacoEditor, revealEditorLine } from './FocusableMonacoEditor';
 
 import swcWasmUrl from '@swc/wasm-web/wasm_bg.wasm?url';
+
+// Built once at module scope so `cdn` is a stable reference — a parent
+// re-render never tears down the preview session. `canvas-confetti` isn't in
+// the curated vendor set, so it's lazy-loaded from esm.sh the first time
+// ConfettiButton.tsx evaluates; the version is pinned for reproducibility.
+const cdnHandler = createEsmShCdnHandler({ versions: { 'canvas-confetti': '1.9.3' } });
 
 // Pages visitors who never toggle inspect shouldn't pay for the picker
 // runtime on initial load. `wantInspect` flips once on first toggle and
@@ -80,6 +87,7 @@ const ICON_BUTTON_STYLE: React.CSSProperties = {
 const HELLO: Files = {
   'App.tsx': `import { Card } from './Card';
 import { TodoList } from './TodoList';
+import { ConfettiButton } from './ConfettiButton';
 
 export default function App() {
   return (
@@ -91,6 +99,7 @@ export default function App() {
     }}>
       <Card title="Welcome">
         <p>Toggle <strong>Inspect element</strong> in the toolbar, then click anything in this preview to jump to its source.</p>
+        <ConfettiButton />
       </Card>
       <TodoList items={[
         'Try inspect mode',
@@ -98,6 +107,35 @@ export default function App() {
         'Add a new file in the file tree',
       ]} />
     </main>
+  );
+}
+`,
+  'ConfettiButton.tsx': `// 'canvas-confetti' is not in the curated vendor import map — it is
+// lazy-loaded from esm.sh on demand the first time this module evaluates.
+// Everything else (react, the editor, swc-wasm) stays local and offline.
+import confetti from 'canvas-confetti';
+import { useState } from 'react';
+
+export function ConfettiButton() {
+  const [count, setCount] = useState(0);
+  return (
+    <button
+      onClick={() => {
+        confetti();
+        setCount((c) => c + 1);
+      }}
+      style={{
+        marginTop: 12,
+        padding: '8px 14px',
+        borderRadius: 8,
+        border: '1px solid #e5e7eb',
+        background: '#f3f4f6',
+        cursor: 'pointer',
+        font: 'inherit',
+      }}
+    >
+      🎉 fired {count}×
+    </button>
   );
 }
 `,
@@ -242,6 +280,7 @@ export function App() {
           activePath={activePath}
           onActivePathChange={setActivePath}
           vendor={defaultVendor}
+          cdn={cdnHandler}
           editor={FocusableMonacoEditor}
           swcWasmUrl={swcWasmUrl}
         >
