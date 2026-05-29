@@ -41,3 +41,19 @@ export function isCodeFile(path: string): boolean {
 export function isCssFile(path: string): boolean {
   return path.endsWith('.css');
 }
+
+/**
+ * Split a bare specifier into its top-level package name and the subpath that
+ * follows. A scope keeps both segments (`@mui/material/styles` → `@mui/material`
+ * + `/styles`); a trailing-slash prefix mapping collapses to its package
+ * (`react-dom/` → `react-dom` + `/`); a bare package has an empty subpath
+ * (`react` → `react` + `''`).
+ */
+export function splitSpecifier(specifier: string): { packageName: string; subpath: string } {
+  // For a scope the package name spans two segments — skip past the first
+  // slash before looking for the one that begins the subpath.
+  const subpathSearchStart = specifier.startsWith('@') ? specifier.indexOf('/') + 1 : 0;
+  const slash = specifier.indexOf('/', subpathSearchStart);
+  if (slash === -1) return { packageName: specifier, subpath: '' };
+  return { packageName: specifier.slice(0, slash), subpath: specifier.slice(slash) };
+}

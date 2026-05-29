@@ -20,7 +20,14 @@
  * @internal
  */
 
-import { initLexer, rewriteImports, ResolveError, VIRTUAL_KEY_PREFIX } from './import-rewriter.ts';
+import {
+  initLexer,
+  rewriteImports,
+  ResolveError,
+  VIRTUAL_KEY_PREFIX,
+  type BareSpecifierResolution,
+} from './import-rewriter.ts';
+import { PackageManifest, PACKAGE_JSON_PATH } from './package-manifest.ts';
 import { defaultLoader } from './default-loader.ts';
 import { resolveRelative } from './path-utils.ts';
 import type { WorkerMessage } from './worker.ts';
@@ -151,9 +158,9 @@ export class TransformClient {
    * preserves the invariant that at most one session is live and prevents
    * orphaned timers from continuing to fire emissions to a dangling sink.
    */
-  attachSession(handlers: SessionHandlers): TransformSession {
+  attachSession(handlers: SessionHandlers, resolution?: BareSpecifierResolution): TransformSession {
     this.currentSession?.detach();
-    const session = new TransformSession(this, handlers);
+    const session = new TransformSession(this, handlers, resolution);
     this.currentSession = session;
     return session;
   }
@@ -266,11 +273,35 @@ export class TransformSession {
   private cssPaths = new Set<string>();
   private detached = false;
   private bootStarted = false;
+  /** Caches the parse of the REPL's `package.json` across the session's rewrites. */
+  private readonly manifest = new PackageManifest();
 
   constructor(
     private readonly client: TransformClient,
     private readonly handlers: SessionHandlers,
+    // Bare-specifier resolution travels with the session, not the client: the
+    // vendor keys derive from the resolved import map, which only lands by the
+    // time an iframe attaches — whereas the client is constructed (and
+    // prewarmed) earlier, before the import map may have resolved.
+    private readonly resolution?: BareSpecifierResolution,
   ) {}
+
+  /**
+   * The bare-specifier resolution for the *current* file snapshot. The base
+   * (vendor keys + resolver) is fixed at attach time, but `declaredVersions`
+   * is re-read from `package.json` each rewrite — its content, and so the URLs
+   * the resolver bakes, can change between batches. The manifest caches the
+   * parse, so this stays cheap when nothing relevant changed.
+   */
+  private resolutionFor(): BareSpecifierResolution | undefined {
+    const resolution = this.resolution;
+    if (!resolution) return undefined;
+    if (!resolution.cdn) return resolution;
+    return {
+      ...resolution,
+      declaredVersions: this.manifest.dependencies(this.files[PACKAGE_JSON_PATH]),
+    };
+  }
 
   /**
    * Apply a new file snapshot.
@@ -385,7 +416,13 @@ export class TransformSession {
       const m = byPath.get(path);
       if (!m) continue;
       try {
-        const rewritten = rewriteImports(path, m.code, this.files, this.client.virtualAliases);
+        const rewritten = rewriteImports(
+          path,
+          m.code,
+          this.files,
+          this.client.virtualAliases,
+          this.resolutionFor(),
+        );
         this.handlers.onModule({ path, code: rewritten.code, deps: rewritten.deps });
       } catch (err) {
         this.reportError(err, path);
@@ -396,6 +433,14 @@ export class TransformSession {
   private syncDiff(next: Files): void {
     const prev = this.files;
     this.files = next;
+
+    // Editing the manifest shifts the version pins the CDN resolver bakes into
+    // module URLs (see `resolutionFor`), but the file emits no module of its
+    // own (the loader skips it), so changing it alone would re-resolve nothing.
+    // When a resolver is active, treat it like a structural change and
+    // re-transform every module so the new pins take effect live.
+    const pkgJsonChanged =
+      Boolean(this.resolution?.cdn) && prev[PACKAGE_JSON_PATH] !== next[PACKAGE_JSON_PATH];
 
     let moduleRemoved = false;
     for (const path of Object.keys(prev)) {
@@ -413,7 +458,7 @@ export class TransformSession {
       this.scheduleTransform(path, newSource);
     }
 
-    if (moduleRemoved) {
+    if (moduleRemoved || pkgJsonChanged) {
       for (const path of Object.keys(next)) {
         this.scheduleTransform(path, next[path]!);
       }
@@ -449,7 +494,13 @@ export class TransformSession {
       }
       await initLexer();
       if (this.detached) return;
-      const rewritten = rewriteImports(path, result.code, this.files, this.client.virtualAliases);
+      const rewritten = rewriteImports(
+        path,
+        result.code,
+        this.files,
+        this.client.virtualAliases,
+        this.resolutionFor(),
+      );
       if (this.detached) return;
       this.handlers.onModule({ path, code: rewritten.code, deps: rewritten.deps });
     } catch (err) {

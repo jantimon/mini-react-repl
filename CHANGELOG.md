@@ -2,6 +2,54 @@
 
 All notable changes to `mini-react-repl`. Dates are YYYY-MM-DD.
 
+## 0.20.0 — 2026-05-29
+
+### Added
+
+- **Opt-in `cdn` prop: lazy-load any npm package from esm.sh on demand.**
+  Bare specifiers the prebuilt `vendor` import map doesn't cover are resolved
+  through a pluggable `ReplCdnResolver` and rewritten to an absolute URL at
+  transform time — no import-map mutation, no iframe reload. It layers
+  _behind_ the vendor map: vendor specifiers always win, so the React
+  singleton, offline support, and Monaco types stay intact for the curated
+  set; esm.sh handles the long tail. Off unless you pass it, so the
+  "static-deploy, no surprise network calls" default is unchanged.
+
+  ```tsx
+  import { createEsmShCdnHandler } from 'mini-react-repl/cdn-esmsh';
+
+  // Stable reference — created once at module scope.
+  const cdn = createEsmShCdnHandler({ versions: { 'canvas-confetti': '1.9.3' } });
+
+  <Repl files={files} vendor={defaultVendor} cdn={cdn} … />;
+  ```
+
+- **New `mini-react-repl/cdn-esmsh` subpath** exporting `createEsmShCdnHandler`
+  and `EsmShOptions` (`origin`, `versions`, `allow`, `query`). Every emitted
+  URL carries `?external=<vendor keys>` so a lazy package reuses the vendor's
+  React (and other singletons) instead of bundling its own — the fix for
+  "Invalid hook call" across the vendor/esm.sh boundary.
+
+- **New `ReplCdnResolver` type** exported from the package root, plus the
+  `examples/cdn-esmsh/` demo (a hermetic, network-free e2e that also proves
+  the React singleton holds across the boundary).
+
+- **`package.json` version pinning from inside the REPL.** When the file table
+  contains a `package.json`, `createEsmShCdnHandler` reads its `dependencies`
+  and pins lazy esm.sh imports to those ranges — so users can pin from the
+  editor, a source the boot-time-frozen resolver config can't track. The
+  explicit `versions` option stays authoritative and wins on conflict;
+  malformed JSON and protocol ranges (`workspace:`, `file:`) are ignored.
+  `ReplCdnResolver` gains an optional `declaredVersions` argument for custom
+  resolvers.
+
+### Notes
+
+- CSP: when `cdn` is enabled and you set a CSP, allow esm.sh under
+  `script-src` — ES module fetches, static and dynamic, are governed by that
+  directive. Lazy esm.sh modules have no `.d.ts`, so they show as Monaco
+  squiggles even though they run.
+
 ## 0.19.0 — 2026-05-28
 
 ### Changed (breaking)

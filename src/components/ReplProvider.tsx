@@ -30,6 +30,7 @@ import type {
   Resolvable,
   TypeBundle,
   VendorBundle,
+  ReplCdnResolver,
   ReplError,
   ReplLoader,
   VirtualModules,
@@ -68,6 +69,18 @@ type ReplProviderBaseProps = {
    * to fall through to the built-in extension dispatch. **Boot-time only.**
    */
   loader?: ReplLoader;
+  /**
+   * Resolve bare specifiers the prebuilt `vendor` import map doesn't cover by
+   * lazy-loading them from a CDN on demand — opt-in arbitrary npm. Off by
+   * default; without it, an unknown bare import errors as an unresolved module.
+   *
+   * Use `createEsmShCdnHandler()` from `mini-react-repl/cdn-esmsh`, or any
+   * {@link ReplCdnResolver}. **Boot-time only.** Create it once at module
+   * scope (a stable reference) — re-creating it on render tears down the
+   * session; the library freezes it on first mount and warns in dev if the
+   * identity changes.
+   */
+  cdn?: ReplCdnResolver;
   /**
    * Inline virtual modules: import specifier → TSX source. User code in the
    * REPL can `import { x } from '@app/util'`; the iframe runtime executes
@@ -268,6 +281,7 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
   const entry = useFreezeValue(props.entry ?? 'App.tsx', 'entry');
   const swcWasmUrl = useFreezeValue(props.swcWasmUrl, 'swcWasmUrl');
   const loader = useFreezeValue(props.loader, 'loader');
+  const cdn = useFreezeValue(props.cdn, 'cdn');
   const virtualModulesProp = useFreezeValue(props.virtualModules, 'virtualModules');
   const shell = useFreezeValue(props.shell, 'shell');
   const languages = useFreezeValue(props.languages, 'languages');
@@ -399,6 +413,7 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
       types: props.types,
       swcWasmUrl,
       loader,
+      cdn,
       virtualModules,
       shell,
       languages,
@@ -416,6 +431,7 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
       props.types,
       swcWasmUrl,
       loader,
+      cdn,
       virtualModules,
       shell,
       languages,

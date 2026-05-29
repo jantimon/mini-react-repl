@@ -52,8 +52,11 @@ Refresh, no backend, no SSR, no server-side bundling.
 
 ## What it doesn't do, and won't pretend to
 
-- **arbitrary npm at runtime.** the vendor set is fixed at build time. there's
-  a builder if you want a different set. no esm.sh fallback in v1.
+- **arbitrary npm at runtime, by default.** the vendor set is fixed at build
+  time and there's a builder if you want a different set. an opt-in `cdn` prop
+  lazy-loads anything outside that set from esm.sh on demand — off unless you
+  pass it, so the default stays "no surprise network calls". see
+  [Lazy npm via esm.sh](#lazy-npm-via-esmsh).
 - **type errors as a build gate.** swc strips types, the iframe runs. Monaco
   shows red squiggles (user files + vendor packages, via the pre-baked
   `.d.ts`), but a type error never blocks the run. like Vite dev:
@@ -84,27 +87,28 @@ import {
 
 ### `<Repl/>` props
 
-| prop                      | type                                              | required | default                       |                                                                              |
-| ------------------------- | ------------------------------------------------- | -------- | ----------------------------- | ---------------------------------------------------------------------------- |
-| `files`                   | `Record<string, string>`                          | yes      | —                             | flat path → source map                                                       |
-| `onFilesChange`           | `(next) => void`                                  | yes      | —                             | called on every set/remove/rename                                            |
-| `vendor`                  | `VendorBundle \| Promise<{ default }>`            | yes      | —                             | `{ importMap, types? }`; promise/thunk forms code-split it                   |
-| `editor`                  | `React.FC<ReplEditorProps>`                       | yes      | —                             | adapter component                                                            |
-| `entry`                   | `string`                                          | no       | `'App.tsx'`                   | the logical entry path                                                       |
-| `transformDebounceMs`     | `number`                                          | no       | `150`                         |                                                                              |
-| `sandbox`                 | `string`                                          | no       | `'allow-scripts allow-forms'` | iframe `sandbox` tokens; pass extras to extend                               |
-| `unsafeDropSandbox`       | `true`                                            | no       | —                             | drop the `sandbox` attribute entirely (only for fully trusted code)          |
-| `virtualModules`          | `Record<string, string>`                          | no       | —                             | inline modules user code can import; see [Virtual modules](#virtual-modules) |
-| `headHtml`                | `string`                                          | no       | `''`                          | injected into iframe `<head>`                                                |
-| `bodyHtml`                | `string`                                          | no       | `''`                          | injected into iframe `<body>`                                                |
-| `showPreviewErrorOverlay` | `boolean`                                         | no       | `true`                        | toggle built-in overlay                                                      |
-| `onPreviewError`          | `(err: ReplError) => void`                        | no       | —                             | transform + runtime errors                                                   |
-| `onMounted`               | `() => void`                                      | no       | —                             | fires when the iframe runtime mounts the entry module                        |
-| `iframeRef`               | `Ref<HTMLIFrameElement>`                          | no       | —                             | forwarded to the underlying `<iframe>`; `postMessage` host data in           |
-| `onAddFile`               | `() => MaybePromise<string \| null \| undefined>` | no       | —                             | custom add-file dialog; return the new path, or nullish to cancel            |
-| `onDeleteFile`            | `(path) => MaybePromise<boolean \| void>`         | no       | —                             | confirm/cancel deletion; return `false` to cancel                            |
-| `swcWasmUrl`              | `string`                                          | no       | jsdelivr CDN                  | self-host this for offline / CI                                              |
-| `loader`                  | `ReplLoader`                                      | no       | —                             | per-file pre-processor; see [Custom file types](#custom-file-types)          |
+| prop                      | type                                              | required | default                       |                                                                                     |
+| ------------------------- | ------------------------------------------------- | -------- | ----------------------------- | ----------------------------------------------------------------------------------- |
+| `files`                   | `Record<string, string>`                          | yes      | —                             | flat path → source map                                                              |
+| `onFilesChange`           | `(next) => void`                                  | yes      | —                             | called on every set/remove/rename                                                   |
+| `vendor`                  | `VendorBundle \| Promise<{ default }>`            | yes      | —                             | `{ importMap, types? }`; promise/thunk forms code-split it                          |
+| `editor`                  | `React.FC<ReplEditorProps>`                       | yes      | —                             | adapter component                                                                   |
+| `entry`                   | `string`                                          | no       | `'App.tsx'`                   | the logical entry path                                                              |
+| `transformDebounceMs`     | `number`                                          | no       | `150`                         |                                                                                     |
+| `sandbox`                 | `string`                                          | no       | `'allow-scripts allow-forms'` | iframe `sandbox` tokens; pass extras to extend                                      |
+| `unsafeDropSandbox`       | `true`                                            | no       | —                             | drop the `sandbox` attribute entirely (only for fully trusted code)                 |
+| `virtualModules`          | `Record<string, string>`                          | no       | —                             | inline modules user code can import; see [Virtual modules](#virtual-modules)        |
+| `headHtml`                | `string`                                          | no       | `''`                          | injected into iframe `<head>`                                                       |
+| `bodyHtml`                | `string`                                          | no       | `''`                          | injected into iframe `<body>`                                                       |
+| `showPreviewErrorOverlay` | `boolean`                                         | no       | `true`                        | toggle built-in overlay                                                             |
+| `onPreviewError`          | `(err: ReplError) => void`                        | no       | —                             | transform + runtime errors                                                          |
+| `onMounted`               | `() => void`                                      | no       | —                             | fires when the iframe runtime mounts the entry module                               |
+| `iframeRef`               | `Ref<HTMLIFrameElement>`                          | no       | —                             | forwarded to the underlying `<iframe>`; `postMessage` host data in                  |
+| `onAddFile`               | `() => MaybePromise<string \| null \| undefined>` | no       | —                             | custom add-file dialog; return the new path, or nullish to cancel                   |
+| `onDeleteFile`            | `(path) => MaybePromise<boolean \| void>`         | no       | —                             | confirm/cancel deletion; return `false` to cancel                                   |
+| `swcWasmUrl`              | `string`                                          | no       | jsdelivr CDN                  | self-host this for offline / CI                                                     |
+| `loader`                  | `ReplLoader`                                      | no       | —                             | per-file pre-processor; see [Custom file types](#custom-file-types)                 |
+| `cdn`                     | `ReplCdnResolver`                                 | no       | —                             | lazy-load bare specifiers off a CDN; see [Lazy npm via esm.sh](#lazy-npm-via-esmsh) |
 
 ### `useRepl()`
 
@@ -272,6 +276,49 @@ with `vendor.importMap.imports` keys resolve in favor of the virtual.
 CSS aliases are not yet supported.
 
 See `examples/virtual-modules/` for a working setup with cross-virtual imports.
+
+### Lazy npm via esm.sh
+
+The vendor set is curated and fixed at build time. To reach for a package
+that isn't in it without rebuilding, pass the opt-in `cdn` prop — bare
+specifiers the vendor import map doesn't cover are lazy-loaded from a CDN on
+demand, at the moment user code imports them:
+
+```tsx
+import { createEsmShCdnHandler } from 'mini-react-repl/cdn-esmsh';
+
+// Build it ONCE at module scope — a stable reference. Pin versions for
+// anything you ship publicly so the lazy import is reproducible.
+const cdn = createEsmShCdnHandler({ versions: { 'canvas-confetti': '1.9.3' } });
+
+<Repl files={files} vendor={defaultVendor} cdn={cdn} ... />
+```
+
+```tsx
+// …then user code can just import it:
+import confetti from 'canvas-confetti'; // resolved from esm.sh on demand
+```
+
+It's **layered behind** the vendor map, never instead of it: vendor
+specifiers always win, so the React singleton, offline support, and Monaco
+types stay intact for the curated set. esm.sh resolves the long tail. Each
+emitted URL carries `?external=<vendor keys>` so a lazy package reuses the
+vendor's React (and every other vendor singleton) instead of bundling its
+own — without that, two Reacts means "Invalid hook call".
+
+`createEsmShCdnHandler` takes `versions` (pin for reproducibility), `allow`
+(an allowlist gate), `origin` (a self-hosted mirror), and `query` (extra
+esm.sh flags, e.g. `{ bundle: true }` to flatten a deep dep tree into one
+request). `cdn` is any `(specifier, sharedDependencies, fromPath) => string |
+null` though, so jsDelivr `+esm` or your own resolver work too. Lazy modules
+have no `.d.ts`, so they show as Monaco squiggles even though they run fine.
+
+**Caveats:** it makes user code call a third-party CDN — leaving `cdn`
+unset keeps the static-deploy, no-surprise-calls default. If you set a CSP,
+allow `script-src https://esm.sh` (module fetches, static and dynamic, are
+governed by `script-src`). **Boot-time only**, like `vendor`.
+
+See `examples/cdn-esmsh/` for a working setup (and the React-singleton proof).
 
 ---
 
@@ -591,6 +638,10 @@ things that will bite you. read this part.
   ```tsx
   <Repl swcWasmUrl="/swc.wasm" />
   ```
+- **`cdn` (esm.sh) is off by default.** the engine itself makes no
+  third-party calls; only a `cdn`-resolved lazy import reaches out. with a
+  CSP, allow `script-src https://esm.sh`. see
+  [Lazy npm via esm.sh](#lazy-npm-via-esmsh).
 - **Monaco workers are not our problem.** if Monaco is your editor, you have
   to configure its workers in your bundler. there's no way around this and
   every Monaco-based library has the same constraint.
@@ -617,7 +668,7 @@ things that will bite you. read this part.
 |                    | this                                                    | Sandpack                          | StackBlitz WebContainers                            |
 | ------------------ | ------------------------------------------------------- | --------------------------------- | --------------------------------------------------- |
 | how it transforms  | swc-wasm in a worker, browser only                      | bundler in a worker, browser only | full Node in WASM, real npm                         |
-| arbitrary npm      | no, curated                                             | yes, via esm.sh                   | yes, real npm install                               |
+| arbitrary npm      | curated set; opt-in esm.sh for the long tail (`cdn`)    | yes, via esm.sh                   | yes, real npm install                               |
 | static deploy      | yes, no backend at all                                  | yes                               | no, needs CSP/COOP/COEP headers from special origin |
 | backend, ssr, etc. | no                                                      | no                                | yes, runs Node                                      |
 | bundle size        | small (engine ~30KB + swc 3MB wasm + your vendor)       | medium                            | enormous, but you get a whole VM                    |

@@ -117,10 +117,22 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
   const entry = actions.entry;
   const swcWasmUrl = actions.swcWasmUrl;
   const loader = actions.loader;
+  const cdn = actions.cdn;
   const virtualModulesRaw = actions.virtualModules;
   const customShell = actions.shell;
   const importMap = actions.importMap;
   const iframeRegistry = actions.iframeRegistry;
+
+  // The vendor import map's keys, verbatim. Drives the rewriter's
+  // vendor-vs-CDN classification (exact + trailing-slash prefix match) and,
+  // reduced to package names, becomes esm.sh's `?external` list so lazy
+  // packages reuse our singletons. Trailing-slash prefix mappings are kept so
+  // their subpaths classify as vendored — the rewriter owns the prefix
+  // semantics and the package-name reduction.
+  const vendorKeys = useMemo(
+    () => (importMap ? new Set(Object.keys(importMap.imports)) : null),
+    [importMap],
+  );
 
   // The iframe runtime mounts a synthetic shell module — never the user's
   // entry directly. `filesForEngine` is the engine-side file table (user
@@ -264,46 +276,54 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
         latestRef.current.onPreviewError?.(err);
       };
 
-      const session = client.attachSession({
-        onModule: (m) => {
-          if (!booted) {
-            collected.push(m);
-          } else {
-            send({ kind: 'load', module: m });
-            // A successful module load implicitly clears prior transform
-            // errors for that path; the iframe's overlay updates on the
-            // next tick.
-            send({ kind: 'clear-errors' });
-          }
+      const session = client.attachSession(
+        {
+          onModule: (m) => {
+            if (!booted) {
+              collected.push(m);
+            } else {
+              send({ kind: 'load', module: m });
+              // A successful module load implicitly clears prior transform
+              // errors for that path; the iframe's overlay updates on the
+              // next tick.
+              send({ kind: 'clear-errors' });
+            }
+          },
+          onCssUpsert: (path, css) => {
+            if (!booted) collectedCss.push({ path, css });
+            else send({ kind: 'css-upsert', path, css });
+          },
+          onCssRemove: (path) => send({ kind: 'css-remove', path }),
+          onError: (e: TransformError) => {
+            const err: ReplError =
+              e.kind === 'resolve'
+                ? { kind: 'resolve', path: e.path, specifier: e.specifier ?? '' }
+                : {
+                    kind: 'transform',
+                    path: e.path,
+                    message: e.message,
+                    loc: e.loc,
+                  };
+            reportError(err);
+            send(
+              e.kind === 'resolve'
+                ? { kind: 'resolve-error', path: e.path, specifier: e.specifier ?? '' }
+                : {
+                    kind: 'transform-error',
+                    path: e.path,
+                    message: e.message,
+                    loc: e.loc,
+                  },
+            );
+          },
         },
-        onCssUpsert: (path, css) => {
-          if (!booted) collectedCss.push({ path, css });
-          else send({ kind: 'css-upsert', path, css });
-        },
-        onCssRemove: (path) => send({ kind: 'css-remove', path }),
-        onError: (e: TransformError) => {
-          const err: ReplError =
-            e.kind === 'resolve'
-              ? { kind: 'resolve', path: e.path, specifier: e.specifier ?? '' }
-              : {
-                  kind: 'transform',
-                  path: e.path,
-                  message: e.message,
-                  loc: e.loc,
-                };
-          reportError(err);
-          send(
-            e.kind === 'resolve'
-              ? { kind: 'resolve-error', path: e.path, specifier: e.specifier ?? '' }
-              : {
-                  kind: 'transform-error',
-                  path: e.path,
-                  message: e.message,
-                  loc: e.loc,
-                },
-          );
-        },
-      });
+        // CDN resolution requires both halves: the resolver and the vendor
+        // keys it classifies against (the type pairs them). `vendorKeys` is
+        // non-null here — the iframe only mounts once the import map has
+        // resolved (see the srcdoc memo / JSX guard) — so this is `undefined`
+        // only when no resolver was configured.
+        cdn && vendorKeys ? { cdn, vendorKeys } : undefined,
+      );
       sessionRef.current = session;
 
       const onMessage = async (event: MessageEvent) => {
@@ -362,7 +382,7 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
         URL.revokeObjectURL(blobUrl);
       };
     },
-    [client, srcdoc, iframeRegistry, setLastError],
+    [client, srcdoc, iframeRegistry, setLastError, cdn, vendorKeys],
   );
 
   // Forward file changes into the live session. The initial value is *not*

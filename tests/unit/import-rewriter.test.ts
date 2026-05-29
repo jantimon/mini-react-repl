@@ -6,6 +6,20 @@ import {
   VIRTUAL_KEY_PREFIX,
 } from '../../src/engine/import-rewriter.ts';
 
+// Echoes the specifier + shared deps back so assertions can see both arrived.
+const cdn = (specifier: string, shared: string[]) =>
+  `https://cdn.test/${specifier}?external=${shared.join(',')}`;
+
+// A resolver that captures the `declaredVersions` 4th arg for assertion.
+function capturingResolver() {
+  let captured: Record<string, string> | undefined;
+  const resolver = (s: string, _d: string[], _p: string, declared?: Record<string, string>) => {
+    captured = declared;
+    return `https://cdn.test/${s}`;
+  };
+  return { resolver, get: () => captured };
+}
+
 describe('import-rewriter', () => {
   beforeAll(async () => {
     await initLexer();
@@ -30,6 +44,20 @@ describe('import-rewriter', () => {
   it('throws ResolveError for missing relative specifier', () => {
     const code = `import x from './missing'\n`;
     expect(() => rewriteImports('App.tsx', code, { 'App.tsx': '' })).toThrow(ResolveError);
+  });
+
+  it('treats a `../` specifier as relative (never bare) and rejects it', () => {
+    // The file namespace is flat, so `../` can't resolve — but it must surface
+    // as a ResolveError, not slip past as a bare specifier (and, with a CDN
+    // configured, become a garbage `esm.sh/../foo` URL).
+    const code = `import x from '../foo'\n`;
+    expect(() => rewriteImports('App.tsx', code, { 'App.tsx': '' })).toThrow(ResolveError);
+    expect(() =>
+      rewriteImports('App.tsx', code, { 'App.tsx': '' }, undefined, {
+        vendorKeys: new Set(['react']),
+        cdn,
+      }),
+    ).toThrow(ResolveError);
   });
 
   it('handles dynamic import specifiers', () => {
@@ -84,5 +112,103 @@ describe('import-rewriter', () => {
     expect(r.code).toContain(`'data:text/javascript,'`);
     expect(r.code).not.toContain(`'./theme.css'`);
     expect(r.deps).toEqual([]);
+  });
+
+  describe('CDN resolution for unknown bare specifiers', () => {
+    const vendorKeys = new Set(['react', 'react-dom', 'react/jsx-runtime']);
+
+    it('passes a vendor key through to the import map (never to the CDN)', () => {
+      const code = `import { useState } from 'react'\n`;
+      const r = rewriteImports('App.tsx', code, { 'App.tsx': '' }, undefined, { vendorKeys, cdn });
+      expect(r.code).toContain(`from 'react'`);
+      expect(r.code).not.toContain('cdn.test');
+      expect(r.deps).toEqual([]);
+    });
+
+    it('rewrites an unknown bare specifier to the CDN URL with shared deps', () => {
+      const code = `import confetti from 'canvas-confetti'\n`;
+      const r = rewriteImports('App.tsx', code, { 'App.tsx': '' }, undefined, { vendorKeys, cdn });
+      // Shared deps are reduced to package names and deduped: the subpath key
+      // `react/jsx-runtime` collapses into `react`.
+      expect(r.code).toContain(`from 'https://cdn.test/canvas-confetti?external=react,react-dom'`);
+      // Absolute URL → bypasses the import map → not a tracked dep.
+      expect(r.deps).toEqual([]);
+    });
+
+    it('treats a subpath under a trailing-slash prefix mapping as vendored', () => {
+      // The import map serves `@scope/ui/` as a prefix mapping; a subpath
+      // import under it must pass through to the import map, not the CDN.
+      const prefixKeys = new Set(['react', '@scope/ui/']);
+      const code = `import { Button } from '@scope/ui/button'\n`;
+      const r = rewriteImports('App.tsx', code, { 'App.tsx': '' }, undefined, {
+        vendorKeys: prefixKeys,
+        cdn,
+      });
+      expect(r.code).toContain(`from '@scope/ui/button'`);
+      expect(r.code).not.toContain('cdn.test');
+      expect(r.deps).toEqual([]);
+    });
+
+    it('reduces a scoped shared dep to its package name in ?external', () => {
+      const scopedKeys = new Set(['react', '@mui/material', '@mui/material/styles']);
+      const code = `import confetti from 'canvas-confetti'\n`;
+      const r = rewriteImports('App.tsx', code, { 'App.tsx': '' }, undefined, {
+        vendorKeys: scopedKeys,
+        cdn,
+      });
+      expect(r.code).toContain(`?external=react,@mui/material'`);
+    });
+
+    it('rewrites an unknown specifier in a dynamic import', () => {
+      const code = `const m = await import('canvas-confetti')\n`;
+      const r = rewriteImports('App.tsx', code, { 'App.tsx': '' }, undefined, { vendorKeys, cdn });
+      expect(r.code).toContain(`import('https://cdn.test/canvas-confetti?external=`);
+    });
+
+    it('leaves the specifier untouched when the resolver returns null', () => {
+      const code = `import x from 'mystery-pkg'\n`;
+      const r = rewriteImports('App.tsx', code, { 'App.tsx': '' }, undefined, {
+        vendorKeys,
+        cdn: () => null,
+      });
+      expect(r.code).toContain(`from 'mystery-pkg'`);
+      expect(r.deps).toEqual([]);
+    });
+
+    it('prefers a virtual alias over the CDN', () => {
+      const code = `import { greet } from '@foo/bar'\n`;
+      const aliases = new Set(['@foo/bar']);
+      const r = rewriteImports('App.tsx', code, { 'App.tsx': '' }, aliases, { vendorKeys, cdn });
+      expect(r.code).not.toContain('cdn.test');
+      expect(r.deps).toEqual([{ specifier: '@foo/bar', target: VIRTUAL_KEY_PREFIX + '@foo/bar' }]);
+    });
+
+    it('passes unknown bare specifiers through when no resolver is configured', () => {
+      const code = `import x from 'canvas-confetti'\n`;
+      const r = rewriteImports('App.tsx', code, { 'App.tsx': '' }, undefined, { vendorKeys });
+      expect(r.code).toContain(`from 'canvas-confetti'`);
+      expect(r.deps).toEqual([]);
+    });
+
+    it('forwards resolution.declaredVersions to the CDN resolver', () => {
+      // Parsing a `package.json` is PackageManifest's job (see its own suite);
+      // the rewriter only forwards whatever pins it's handed.
+      const { resolver, get } = capturingResolver();
+      rewriteImports('App.tsx', `import c from 'canvas-confetti'\n`, { 'App.tsx': '' }, undefined, {
+        vendorKeys,
+        cdn: resolver,
+        declaredVersions: { 'canvas-confetti': '1.9.3' },
+      });
+      expect(get()).toEqual({ 'canvas-confetti': '1.9.3' });
+    });
+
+    it('forwards undefined declaredVersions when none are configured', () => {
+      const { resolver, get } = capturingResolver();
+      rewriteImports('App.tsx', `import c from 'canvas-confetti'\n`, { 'App.tsx': '' }, undefined, {
+        vendorKeys,
+        cdn: resolver,
+      });
+      expect(get()).toBeUndefined();
+    });
   });
 });

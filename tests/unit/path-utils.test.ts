@@ -4,6 +4,7 @@ import {
   languageFor,
   isCodeFile,
   isCssFile,
+  splitSpecifier,
 } from '../../src/engine/path-utils.ts';
 
 describe('path-utils', () => {
@@ -32,5 +33,27 @@ describe('path-utils', () => {
     expect(isCodeFile('App.tsx')).toBe(true);
     expect(isCodeFile('styles.css')).toBe(false);
     expect(isCssFile('styles.css')).toBe(true);
+  });
+
+  describe('splitSpecifier', () => {
+    it('splits a bare package from its subpath', () => {
+      expect(splitSpecifier('lodash/fp')).toEqual({ packageName: 'lodash', subpath: '/fp' });
+    });
+
+    it('keeps a scoped package name intact', () => {
+      expect(splitSpecifier('@mui/material/styles')).toEqual({
+        packageName: '@mui/material',
+        subpath: '/styles',
+      });
+    });
+
+    it('returns an empty subpath for a bare package', () => {
+      expect(splitSpecifier('react')).toEqual({ packageName: 'react', subpath: '' });
+      expect(splitSpecifier('@scope/pkg')).toEqual({ packageName: '@scope/pkg', subpath: '' });
+    });
+
+    it('collapses a trailing-slash prefix mapping to its package', () => {
+      expect(splitSpecifier('react-dom/')).toEqual({ packageName: 'react-dom', subpath: '/' });
+    });
   });
 });

@@ -255,4 +255,43 @@ export type ReplLoader = (
   input: ReplLoaderInput,
 ) => ReplLoaderResult | null | undefined | Promise<ReplLoaderResult | null | undefined>;
 
+/**
+ * Resolve a bare import specifier the prebuilt `vendor` import map does NOT
+ * cover, lazy-loading it from a CDN on demand. Return a fully-qualified URL
+ * the sandboxed iframe can import (e.g. `https://esm.sh/canvas-confetti`), or
+ * `null` to decline — the specifier then surfaces as the usual "unresolved
+ * module" error, exactly as without a resolver.
+ *
+ * Opt in via `<Repl cdn={...} />` / `<ReplProvider cdn={...} />`. It layers
+ * *behind* the import map: vendor specifiers always win, so the React
+ * singleton, offline support, and editor types stay intact for the curated
+ * set. Reach for `createEsmShCdnHandler()` from `mini-react-repl/cdn-esmsh`,
+ * or implement your own for a different CDN / self-hosted mirror.
+ *
+ * Resolution happens at transform time and emits an absolute URL straight
+ * into the module body, so the import map is never mutated and the iframe
+ * never reloads — that is what makes it "on demand".
+ *
+ * @param specifier          the bare import, e.g. `'canvas-confetti'` or `'lodash/fp'`
+ * @param sharedDependencies import-map keys the prebuilt `vendor` already
+ *                           serves. Hand these to the CDN (esm.sh's
+ *                           `?external`) so a lazy package reuses the vendor's
+ *                           singletons — React above all — instead of bundling
+ *                           a second copy that would throw "Invalid hook call".
+ * @param fromPath           logical path of the importing file (diagnostics)
+ * @param declaredVersions   the `dependencies` block of a `package.json` living
+ *                           in the REPL's file table (package name → semver
+ *                           range), or `undefined` when there is none or it is
+ *                           malformed. Lets the user pin versions from inside
+ *                           the REPL — a source the boot-time-frozen resolver
+ *                           config can't track. A resolver that honours it
+ *                           should still let any explicit, host-supplied pin win.
+ */
+export type ReplCdnResolver = (
+  specifier: string,
+  sharedDependencies: string[],
+  fromPath: string,
+  declaredVersions?: Record<string, string>,
+) => string | null;
+
 import type * as React from 'react';

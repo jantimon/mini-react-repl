@@ -1,6 +1,6 @@
 {
   "name": "mini-react-repl",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "description": "Browser-only React TSX REPL — multi-file editor, live preview, real Fast Refresh, no backend.",
   "keywords": [
     "fast-refresh",
@@ -51,6 +51,10 @@
       "types": "./dist/inspect/index.d.ts",
       "import": "./dist/inspect/index.js"
     },
+    "./cdn-esmsh": {
+      "types": "./dist/cdn-esmsh.d.ts",
+      "import": "./dist/cdn-esmsh.js"
+    },
     "./vendor-default": {
       "types": "./dist/vendor-default/index.d.ts",
       "import": "./dist/vendor-default/index.js"
@@ -79,7 +83,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p examples/e2e-fixture && tsc --noEmit -p examples/gh-pages && tsc --noEmit -p examples/custom-vendor && tsc --noEmit -p examples/virtual-modules && tsc --noEmit -p examples/transform && tsc --noEmit -p examples/starter",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p examples/e2e-fixture && tsc --noEmit -p examples/gh-pages && tsc --noEmit -p examples/custom-vendor && tsc --noEmit -p examples/virtual-modules && tsc --noEmit -p examples/cdn-esmsh && tsc --noEmit -p examples/transform && tsc --noEmit -p examples/starter",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "format": "oxfmt",

@@ -54,6 +54,7 @@ export default defineConfig([
       'vendor-base': 'src/vendor-base.ts',
       'vendor-builder/cli': 'src/vendor-builder/cli.ts',
       'preview-html': 'src/preview-html.ts',
+      'cdn-esmsh': 'src/cdn-esmsh.ts',
       loader: 'src/loader.ts',
     },
     sourcemap: true,

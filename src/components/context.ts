@@ -19,6 +19,7 @@ import type {
   Files,
   ImportMap,
   LanguageMap,
+  ReplCdnResolver,
   ReplError,
   ReplLoader,
   Resolvable,
@@ -97,6 +98,13 @@ export type ReplActionsContextValue = {
   swcWasmUrl: string | undefined;
   /** Optional file pre-processor (snapshotted on first mount). */
   loader: ReplLoader | undefined;
+  /**
+   * Optional CDN resolver for bare specifiers the vendor import map doesn't
+   * cover (snapshotted on first mount). `<ReplPreview/>` pairs it with the
+   * resolved import-map keys and hands both to the transform session. See
+   * {@link ReplCdnResolver}.
+   */
+  cdn: ReplCdnResolver | undefined;
   /**
    * Inline virtual modules (alias → source). Snapshotted on first mount.
    * Always defined; defaults to `{}` when the consumer didn't pass any.

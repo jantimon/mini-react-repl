@@ -7,6 +7,7 @@
  * Subpath imports for opt-in pieces:
  *   - `mini-react-repl/editor-monaco`  — Monaco-based editor adapter
  *   - `mini-react-repl/inspect`        — element-to-source picker
+ *   - `mini-react-repl/cdn-esmsh`      — esm.sh resolver for the `cdn` prop
  *   - `mini-react-repl/loader`         — `defaultLoader` for custom loaders
  *   - `mini-react-repl/vendor-default` — curated default vendor bundle
  *   - `mini-react-repl/vendor-base`    — required-core re-export for custom vendors
@@ -48,4 +49,5 @@ export type {
   ReplLoaderResult,
   ReplTransform,
   ReplTransformOptions,
+  ReplCdnResolver,
 } from './types.ts';
