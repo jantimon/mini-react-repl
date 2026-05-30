@@ -25,26 +25,22 @@ export default function App() {
         style={{ display: 'flex', gap: 8, marginTop: 16, maxWidth: 320 }}
       >
         <input
-          data-testid="text"
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="add an item"
           style={{ flex: 1 }}
         />
-        <button data-testid="add" type="submit" style={{ padding: '6px 12px', cursor: 'pointer' }}>
+        <button type="submit" style={{ padding: '6px 12px', cursor: 'pointer' }}>
           add
         </button>
       </form>
-      <ul data-testid="items" style={{ marginTop: 16, paddingLeft: 0, listStyle: 'none' }}>
+      <ul style={{ marginTop: 16, paddingLeft: 0, listStyle: 'none' }}>
         {items.map((item) => (
           <li
             key={item.id}
-            data-testid="item"
             style={{ display: 'flex', gap: 8, padding: '4px 0', alignItems: 'baseline' }}
           >
-            <code data-testid="item-id" style={{ color: '#888', fontSize: 12 }}>
-              {item.id}
-            </code>
+            <code style={{ color: '#888', fontSize: 12 }}>{item.id}</code>
             <span>{item.text}</span>
           </li>
         ))}

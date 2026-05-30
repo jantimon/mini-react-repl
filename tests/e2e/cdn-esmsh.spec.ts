@@ -15,17 +15,19 @@
  * hook call" and never render. A successful render is the assertion.
  */
 
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { preview, setEditorText } from './support/editor';
 
 const URL_BASE = 'http://localhost:5176/';
 
-function preview(page: Page) {
-  return page.frameLocator('.repl-iframe');
-}
-
 // esm.sh ships already-compiled JS, so the stubs use `createElement`, not JSX.
+// The confetti stub renders a visible status node so the test can confirm the
+// lazily-imported module actually executed — no test-only data attribute.
 const CONFETTI_STUB = `export default function confetti() {
-  document.body.setAttribute('data-confetti-fired', 'true');
+  const el = document.createElement('div');
+  el.setAttribute('role', 'status');
+  el.textContent = 'confetti fired';
+  document.body.appendChild(el);
 }`;
 
 const WIDGET_STUB = `import { createElement, useState } from "react";
@@ -33,7 +35,7 @@ export default function Widget() {
   const [n, setN] = useState(7);
   return createElement(
     "button",
-    { "data-testid": "cdn-widget", onClick: () => setN(n + 1) },
+    { onClick: () => setN(n + 1) },
     "cdn:" + n,
   );
 }`;
@@ -48,43 +50,41 @@ test.describe('cdn-esmsh demo', () => {
         body: isWidget ? WIDGET_STUB : CONFETTI_STUB,
       });
     });
+    await page.goto(URL_BASE);
   });
 
   test('lazy-loads a CDN module that is not in the vendor set', async ({ page }) => {
-    await page.goto(URL_BASE);
-
-    const button = preview(page).locator('[data-testid=confetti]');
+    const button = preview(page).getByRole('button', { name: /fired/ });
     await expect(button).toHaveText('🎉 fired 0×', { timeout: 30_000 });
 
     // Clicking runs the lazily-imported esm.sh module (the confetti stub) and
     // re-renders via the host's React.
     await button.click();
     await expect(button).toHaveText('🎉 fired 1×');
-    await expect(preview(page).locator('body')).toHaveAttribute('data-confetti-fired', 'true');
+    await expect(preview(page).getByRole('status')).toHaveText('confetti fired');
   });
 
   test('a CDN module shares the host React singleton', async ({ page }) => {
-    await page.goto(`${URL_BASE}?test`);
-    await page.waitForFunction(() => Boolean((window as { __replTest__?: unknown }).__replTest__));
+    // Wait for the cold render so Monaco has mounted the seed before we edit.
+    await expect(preview(page).getByRole('button', { name: /fired/ })).toBeVisible({
+      timeout: 30_000,
+    });
 
-    // Swap in code that imports a hook-using component from a CDN-only
-    // package. It renders iff our React is the one its bare `import "react"`
-    // resolved to.
-    await page.evaluate(() => {
-      (
-        window as unknown as { __replTest__: { setFile: (p: string, s: string) => void } }
-      ).__replTest__.setFile(
-        'App.tsx',
-        `import Widget from 'cdn-widget';
+    // Edit App.tsx to import a hook-using component from a CDN-only package.
+    // It renders iff our React is the one its bare `import "react"` resolved
+    // to (otherwise: "Invalid hook call").
+    await setEditorText(
+      page,
+      'App.tsx',
+      `import Widget from 'cdn-widget';
 
 export default function App() {
   return <Widget />;
 }
 `,
-      );
-    });
+    );
 
-    const widget = preview(page).locator('[data-testid=cdn-widget]');
+    const widget = preview(page).getByRole('button', { name: /^cdn:/ });
     await expect(widget).toHaveText('cdn:7', { timeout: 30_000 });
   });
 });

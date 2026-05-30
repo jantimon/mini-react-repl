@@ -286,6 +286,16 @@ export function MonacoReplEditor(props: MonacoReplEditorProps): React.ReactEleme
     });
     editorRef.current = editor;
 
+    // Dev-only seam: hang the Monaco namespace off the editor's container node
+    // so e2e tests can read TS diagnostics via `getModelMarkers` — the one
+    // editor behavior with no user-visible text to query. Scoped to the DOM
+    // node (not a `window` global) so tests reach it the same way they reach
+    // everything else: through the DOM. Stripped from production by the
+    // NODE_ENV guard (same convention as ReplProvider).
+    if (process.env.NODE_ENV !== 'production') {
+      Object.assign(containerRef.current, { __monaco__: monaco });
+    }
+
     const sub = editor.onDidChangeModelContent(() => {
       const model = editor.getModel();
       if (!model) return;

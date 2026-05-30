@@ -6,13 +6,10 @@
  * bundle works at runtime.
  */
 
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { preview } from './support/editor';
 
 const CUSTOM_VENDOR_URL = 'http://localhost:5174/';
-
-function preview(page: Page) {
-  return page.frameLocator('.repl-iframe');
-}
 
 test.describe('custom-vendor demo', () => {
   test('nanoid generates ids for added items', async ({ page }) => {
@@ -20,21 +17,22 @@ test.describe('custom-vendor demo', () => {
 
     // Wait for the iframe to mount and the seed UI to render. Generous
     // timeout — first paint waits on swc-wasm + vendor bundle fetches.
-    const text = preview(page).locator('[data-testid=text]');
-    await expect(text).toBeVisible({ timeout: 30_000 });
+    const textbox = preview(page).getByRole('textbox');
+    await expect(textbox).toBeVisible({ timeout: 30_000 });
+    const addButton = preview(page).getByRole('button', { name: 'add' });
 
-    await text.fill('first');
-    await preview(page).locator('[data-testid=add]').click();
+    await textbox.fill('first');
+    await addButton.click();
 
-    await text.fill('second');
-    await preview(page).locator('[data-testid=add]').click();
+    await textbox.fill('second');
+    await addButton.click();
 
-    const items = preview(page).locator('[data-testid=item]');
+    const items = preview(page).getByRole('listitem');
     await expect(items).toHaveCount(2);
 
-    const ids = preview(page).locator('[data-testid=item-id]');
-    const first = (await ids.nth(0).textContent()) ?? '';
-    const second = (await ids.nth(1).textContent()) ?? '';
+    // Each row's id comes from nanoid() — rendered in its <code> element.
+    const first = (await items.nth(0).locator('code').textContent()) ?? '';
+    const second = (await items.nth(1).locator('code').textContent()) ?? '';
     expect(first).not.toEqual('');
     expect(second).not.toEqual('');
     expect(first).not.toEqual(second);

@@ -1,294 +1,166 @@
 /**
- * E2E suite for mini-react-repl. Runs against examples/e2e-fixture with ?test exposed
- * window hooks so we drive file changes without typing into Monaco.
- *
- * The test cases match SPEC.md §17.
+ * E2E suite for mini-react-repl. Runs against examples/e2e-fixture and drives
+ * the REPL the way a user does — clicking accessible file tabs, editing the
+ * active file, deleting files — then asserts on what the user sees: the
+ * rendered preview and the in-iframe error overlay.
  */
 
-import { test, expect, type Page } from '@playwright/test';
-
-declare global {
-  interface Window {
-    __replTest__: {
-      setFile: (path: string, source: string) => void;
-      removeFile: (path: string) => void;
-      renameFile: (oldPath: string, newPath: string) => void;
-      reset: () => void;
-      getError: () => unknown;
-      getMarkers: (
-        path: string,
-      ) => Promise<Array<{ code?: string | { value: string }; severity: number; message: string }>>;
-      postToIframe: (payload: unknown) => boolean;
-      hasIframeRef: () => boolean;
-      setInspectActive: (next: boolean) => void;
-      getLastPick: () => unknown;
-    };
-  }
-}
-
-async function gotoDemo(page: Page) {
-  await page.goto('/?test');
-  // Wait for test hooks to be installed.
-  await page.waitForFunction(() => Boolean(window.__replTest__));
-}
-
-function preview(page: Page) {
-  return page.frameLocator('.repl-iframe');
-}
+import { test, expect } from '@playwright/test';
+import {
+  preview,
+  gotoFixture,
+  openFile,
+  setEditorText,
+  addFile,
+  expectOverlay,
+  expectNoOverlay,
+} from './support/editor';
 
 test.describe('mini-react-repl', () => {
   test('cold render: hello-world appears', async ({ page }) => {
-    await gotoDemo(page);
-    const h1 = preview(page).locator('h1');
-    await expect(h1).toContainText(/Today is/i, { timeout: 30_000 });
-    await expect(preview(page).locator('[data-testid=counter]')).toBeVisible();
+    await gotoFixture(page);
+    await expect(preview(page).getByRole('heading', { name: /Today is/i })).toBeVisible();
+    await expect(preview(page).getByRole('button', { name: /count:/ })).toBeVisible();
   });
 
   test('edit App.tsx → preview updates', async ({ page }) => {
-    await gotoDemo(page);
-    await expect(preview(page).locator('h1')).toContainText(/Today is/i, { timeout: 30_000 });
+    await gotoFixture(page);
 
-    await page.evaluate(() => {
-      window.__replTest__.setFile(
-        'App.tsx',
-        `export default function App() {
-          return <h1 data-testid="changed">edited</h1>
-        }`,
-      );
-    });
+    await setEditorText(
+      page,
+      'App.tsx',
+      `export default function App() {
+  return <h1>edited</h1>;
+}
+`,
+    );
 
-    await expect(preview(page).locator('[data-testid=changed]')).toHaveText('edited');
+    await expect(preview(page).getByRole('heading', { name: 'edited' })).toBeVisible();
   });
 
   test('Fast Refresh preserves useState across edits', async ({ page }) => {
-    await gotoDemo(page);
-    const counter = preview(page).locator('[data-testid=counter]');
-    await expect(counter).toBeVisible({ timeout: 30_000 });
+    await gotoFixture(page);
 
-    // click 3 times
-    for (let i = 0; i < 3; i++) await counter.click();
-    await expect(counter).toContainText('count: 3');
+    const counter = preview(page).getByRole('button', { name: /count:/ });
+    await counter.click();
+    await counter.click();
+    await counter.click();
+    await expect(counter).toHaveText('count: 3');
 
-    // edit Counter.tsx — only the JSX, NOT the useState call. Refresh
-    // should preserve the count.
-    await page.evaluate(() => {
-      window.__replTest__.setFile(
-        'Counter.tsx',
-        `import { useState } from 'react'
+    // Edit Counter.tsx but keep the component identity + hooks intact, so Fast
+    // Refresh re-renders without resetting state. Only the label changes.
+    await openFile(page, 'Counter.tsx');
+    await setEditorText(
+      page,
+      'Counter.tsx',
+      `import { useState } from 'react';
+
 export function Counter() {
-  const [n, setN] = useState(0)
-  return (
-    <button data-testid="counter" data-edited="true" onClick={() => setN((x) => x + 1)}>
-      tally: {n}
-    </button>
-  )
-}`,
-      );
-    });
+  const [n, setN] = useState(0);
+  return <button onClick={() => setN((x) => x + 1)}>tally: {n}</button>;
+}
+`,
+    );
 
-    // Wait for the new render.
-    await expect(counter).toHaveAttribute('data-edited', 'true');
-    // State preserved!
-    await expect(counter).toContainText('tally: 3');
+    // Same state (3) survives the edit; the new label proves the edit applied.
+    await expect(preview(page).getByRole('button', { name: 'tally: 3' })).toBeVisible();
   });
 
-  test('rename a file → overlay shows Module not found', async ({ page }) => {
-    await gotoDemo(page);
-    await expect(preview(page).locator('h1')).toContainText(/Today is/i, { timeout: 30_000 });
+  test('importing a missing module surfaces a Module not found overlay', async ({ page }) => {
+    await gotoFixture(page);
 
-    await page.evaluate(() => {
-      window.__replTest__.renameFile('Counter.tsx', 'MyCounter.tsx');
-    });
+    // Editing the entry to import a file that doesn't exist forces a recompile
+    // whose resolution fails — the user's typical "Module not found" case.
+    await setEditorText(
+      page,
+      'App.tsx',
+      `import './does-not-exist';
 
-    // Overlay appears.
-    const overlay = preview(page)
-      .locator('[id="__repl-error-overlay__"]')
-      .or(preview(page).locator('.repl-error-overlay'));
-    // The overlay is inside a shadow root in the iframe — fall back to
-    // checking the parent's onPreviewError state via __replTest__.
-    await expect
-      .poll(
-        async () => {
-          return await page.evaluate(() => {
-            const e = window.__replTest__.getError() as { kind?: string } | null;
-            return e?.kind ?? null;
-          });
-        },
-        { timeout: 10_000 },
-      )
-      .toBe('resolve');
+export default function App() {
+  return <h1>broken</h1>;
+}
+`,
+    );
 
-    // Last-good render still visible.
-    await expect(preview(page).locator('[data-testid=counter]')).toBeVisible();
-    void overlay;
+    await expectOverlay(page, /Module not found/i);
+    // Last-good render stays mounted behind the overlay.
+    await expect(preview(page).getByRole('heading', { name: /Today is/i })).toBeVisible();
   });
 
   test('syntax error keeps last-good render mounted', async ({ page }) => {
-    await gotoDemo(page);
-    await expect(preview(page).locator('h1')).toContainText(/Today is/i, { timeout: 30_000 });
+    await gotoFixture(page);
+    await expect(preview(page).getByRole('button', { name: /count:/ })).toBeVisible();
 
-    await page.evaluate(() => {
-      window.__replTest__.setFile('Counter.tsx', `export function Counter() { return <div>oops`);
-    });
+    await openFile(page, 'Counter.tsx');
+    await setEditorText(page, 'Counter.tsx', `export function Counter() { return <div>oops`);
 
-    await expect
-      .poll(
-        async () => {
-          return await page.evaluate(() => {
-            const e = window.__replTest__.getError() as { kind?: string } | null;
-            return e?.kind ?? null;
-          });
-        },
-        { timeout: 10_000 },
-      )
-      .toBe('transform');
-
-    await expect(preview(page).locator('[data-testid=counter]')).toBeVisible();
+    await expectOverlay(page, /Transform error/i);
+    // The previous successful render is still on screen behind the overlay.
+    await expect(preview(page).getByRole('button', { name: /count:/ })).toBeVisible();
   });
 
-  test('runtime error from user code surfaces', async ({ page }) => {
-    await gotoDemo(page);
-    await expect(preview(page).locator('h1')).toContainText(/Today is/i, { timeout: 30_000 });
+  test('runtime error surfaces in the overlay and via onPreviewError', async ({ page }) => {
+    await gotoFixture(page);
 
-    await page.evaluate(() => {
-      window.__replTest__.setFile(
-        'App.tsx',
-        `export default function App() {
-  throw new Error('boom from user code')
-}`,
-      );
-    });
-
-    await expect
-      .poll(
-        async () => {
-          return await page.evaluate(() => {
-            const e = window.__replTest__.getError() as { kind?: string; message?: string } | null;
-            return e?.kind ?? null;
-          });
-        },
-        { timeout: 10_000 },
-      )
-      .toBe('runtime');
-  });
-
-  test('Monaco shows no 17004 / 2792 on the seed App.tsx', async ({ page }) => {
-    await gotoDemo(page);
-    // Wait for the preview to mount — that confirms Monaco has rendered
-    // App.tsx and the TS service has had a chance to run diagnostics.
-    await expect(preview(page).locator('h1')).toContainText(/Today is/i, { timeout: 30_000 });
-
-    // Monaco's diagnostics arrive asynchronously after the TS worker boots;
-    // poll until either we see clean markers or the test times out.
-    await expect
-      .poll(
-        async () => {
-          const markers = await page.evaluate(() => window.__replTest__.getMarkers('App.tsx'));
-          // Severity 8 == MarkerSeverity.Error in Monaco.
-          const errorCodes = markers
-            .filter((m) => m.severity === 8)
-            .map((m) => (typeof m.code === 'object' ? m.code.value : m.code));
-          return errorCodes;
-        },
-        { timeout: 15_000 },
-      )
-      .not.toContain('17004');
-
-    const finalErrorCodes = await page.evaluate(() =>
-      window.__replTest__
-        .getMarkers('App.tsx')
-        .then((ms) =>
-          ms
-            .filter((m) => m.severity === 8)
-            .map((m) => (typeof m.code === 'object' ? m.code.value : m.code)),
-        ),
+    await setEditorText(
+      page,
+      'App.tsx',
+      `export default function App() {
+  throw new Error('boom from user code');
+}
+`,
     );
-    expect(finalErrorCodes).not.toContain('17004');
-    expect(finalErrorCodes).not.toContain('2792');
+
+    await expectOverlay(page, /Runtime error/i);
+    // The `onPreviewError` prop also fires; the fixture echoes its kind into a
+    // host log region, so this guards the callback contract (distinct from the
+    // runtime's own in-preview overlay above).
+    await expect(page.getByRole('log')).toHaveText('preview error: runtime');
   });
 
   test('iframeRef forwards to <iframe>; host can postMessage in', async ({ page }) => {
-    await gotoDemo(page);
-    await expect(preview(page).locator('h1')).toContainText(/Today is/i, { timeout: 30_000 });
+    await gotoFixture(page);
 
-    // Demo passes `iframeRef` to <Repl>; the demo test hook exposes
-    // `hasIframeRef()` which returns true once the ref attached.
-    await expect.poll(() => page.evaluate(() => window.__replTest__.hasIframeRef())).toBe(true);
+    const messageBox = page.getByRole('textbox', { name: 'Message to preview' });
+    const send = page.getByRole('button', { name: 'Send to preview' });
+    const inbox = preview(page).getByRole('status');
 
-    // The bodyHtml-injected listener writes into #ext-msg when it receives
-    // `{ type: '__ext_test__', payload }`. Posting via the ref should land.
-    await page.evaluate(() => window.__replTest__.postToIframe('hello-from-host'));
-    await expect(preview(page).locator('[data-testid=ext-msg]')).toHaveText('hello-from-host');
+    await messageBox.fill('hello-from-host');
+    await send.click();
+    await expect(inbox).toContainText('hello-from-host');
 
-    // A second post should overwrite — confirms the listener stays mounted.
-    await page.evaluate(() => window.__replTest__.postToIframe('round-two'));
-    await expect(preview(page).locator('[data-testid=ext-msg]')).toHaveText('round-two');
+    // A second post overwrites — confirms the listener stays mounted.
+    await messageBox.fill('round-two');
+    await send.click();
+    await expect(inbox).toContainText('round-two');
   });
 
   test('JS importing a sibling CSS file applies styles without a resolve error', async ({
     page,
   }) => {
-    await gotoDemo(page);
-    await expect(preview(page).locator('h1')).toContainText(/Today is/i, { timeout: 30_000 });
+    await gotoFixture(page);
 
-    // Drop a CSS file into the project, then have App.tsx import it. Before
-    // the fix, the compiled blob would still contain `import './App.css'`,
-    // which the browser can't resolve against a blob: URL ("Invalid relative
-    // url or base scheme isn't hierarchical").
-    await page.evaluate(() => {
-      window.__replTest__.setFile('App.css', `[data-testid=styled] { color: rgb(123, 45, 67); }`);
-      window.__replTest__.setFile(
-        'App.tsx',
-        `import './App.css'
+    // Add a CSS file via the real "Add file" control, fill it, then have
+    // App.tsx import it. Before the fix, the compiled blob still contained
+    // `import './App.css'`, which the browser can't resolve against a blob:
+    // URL ("Invalid relative url or base scheme isn't hierarchical").
+    await addFile(page, 'App.css');
+    await setEditorText(page, 'App.css', `h1 { color: rgb(123, 45, 67); }`);
+
+    await openFile(page, 'App.tsx');
+    await setEditorText(
+      page,
+      'App.tsx',
+      `import './App.css'
 export default function App() {
-  return <h1 data-testid="styled">styled</h1>
-}`,
-      );
-    });
-
-    const h1 = preview(page).locator('[data-testid=styled]');
-    await expect(h1).toHaveText('styled');
-    await expect(h1).toHaveCSS('color', 'rgb(123, 45, 67)');
-
-    // And no error surfaced through the overlay channel.
-    const err = await page.evaluate(() => window.__replTest__.getError());
-    expect(err).toBeNull();
-  });
-
-  test('Monaco surfaces a real type error from vendor types', async ({ page }) => {
-    await gotoDemo(page);
-    await expect(preview(page).locator('h1')).toContainText(/Today is/i, { timeout: 30_000 });
-
-    // Replace App.tsx with a deliberate misuse of date-fns `format`: too
-    // few arguments. Real types are wired up only when the vendor.types
-    // pipeline reaches Monaco's TS service end-to-end.
-    await page.evaluate(() => {
-      window.__replTest__.setFile(
-        'App.tsx',
-        `import { format } from 'date-fns'
-export default function App() {
-  // @ts-expect-no-error — we want Monaco to flag this.
-  return <h1>{String(format(new Date()))}</h1>
+  return <h1>styled</h1>
 }
 `,
-      );
-    });
+    );
 
-    await expect
-      .poll(
-        async () => {
-          const markers = await page.evaluate(() => window.__replTest__.getMarkers('App.tsx'));
-          return markers.some((m) => {
-            if (m.severity !== 8) return false;
-            const code = String(typeof m.code === 'object' ? m.code.value : m.code);
-            // 2554: "Expected N-M arguments, but got K"
-            // 2345: "Argument of type X is not assignable to parameter of type Y"
-            // 2769: "No overload matches this call"
-            return code === '2554' || code === '2345' || code === '2769';
-          });
-        },
-        { timeout: 15_000 },
-      )
-      .toBe(true);
+    const styled = preview(page).getByRole('heading', { name: 'styled' });
+    await expect(styled).toBeVisible();
+    await expect(styled).toHaveCSS('color', 'rgb(123, 45, 67)');
+    await expectNoOverlay(page);
   });
 });

@@ -8,39 +8,18 @@
  */
 
 import { test, expect, type Page } from '@playwright/test';
-
-declare global {
-  interface Window {
-    __replTest__: {
-      setFile: (path: string, source: string) => void;
-      removeFile: (path: string) => void;
-      renameFile: (oldPath: string, newPath: string) => void;
-      reset: () => void;
-      getError: () => unknown;
-      getMarkers: (
-        path: string,
-      ) => Promise<Array<{ code?: string | { value: string }; severity: number; message: string }>>;
-      postToIframe: (payload: unknown) => boolean;
-      hasIframeRef: () => boolean;
-      setInspectActive: (next: boolean) => void;
-      getLastPick: () => unknown;
-    };
-  }
-}
+import { preview, setEditorText, expectOverlay } from './support/editor';
 
 async function gotoDemo(page: Page) {
-  await page.goto('/?test');
-  await page.waitForFunction(() => Boolean(window.__replTest__));
-}
-
-function preview(page: Page) {
-  return page.frameLocator('.repl-iframe');
+  await page.goto('/');
+  await expect(preview(page).getByRole('heading', { name: /Today is/i })).toBeVisible({
+    timeout: 30_000,
+  });
 }
 
 test.describe('iframe sandbox', () => {
   test('default sandbox attributes', async ({ page }) => {
     await gotoDemo(page);
-    await expect(preview(page).locator('h1')).toContainText(/Today is/i, { timeout: 30_000 });
     await expect(page.locator('iframe.repl-iframe')).toHaveAttribute(
       'sandbox',
       'allow-scripts allow-forms',
@@ -54,7 +33,6 @@ test.describe('iframe sandbox', () => {
 
   test('preview document is delivered via blob: URL, not srcdoc', async ({ page }) => {
     await gotoDemo(page);
-    await expect(preview(page).locator('h1')).toContainText(/Today is/i, { timeout: 30_000 });
 
     const iframe = page.locator('iframe.repl-iframe');
     await expect(iframe).toHaveAttribute('src', /^blob:/);
@@ -64,31 +42,22 @@ test.describe('iframe sandbox', () => {
 
   test('user code cannot mutate window.parent.document', async ({ page }) => {
     await gotoDemo(page);
-    await expect(preview(page).locator('h1')).toContainText(/Today is/i, { timeout: 30_000 });
 
     const before = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 
-    await page.evaluate(() => {
-      window.__replTest__.setFile(
-        'App.tsx',
-        `export default function App() {
-           window.parent.document.body.style.background = 'rgb(255, 0, 0)';
-           return <h1 data-testid="attacked">attacked</h1>;
-         }`,
-      );
-    });
+    await setEditorText(
+      page,
+      'App.tsx',
+      `export default function App() {
+         window.parent.document.body.style.background = 'rgb(255, 0, 0)';
+         return <h1>attacked</h1>;
+       }`,
+    );
 
-    // Wait for the runtime error so we know user code actually executed —
-    // otherwise the parent-unchanged assertion below would pass vacuously.
-    await expect
-      .poll(
-        async () =>
-          await page.evaluate(
-            () => (window.__replTest__.getError() as { kind?: string } | null)?.kind ?? null,
-          ),
-        { timeout: 10_000 },
-      )
-      .toBe('runtime');
+    // The cross-origin access throws, surfacing the runtime error overlay —
+    // which also proves user code actually executed, so the parent-unchanged
+    // assertion below can't pass vacuously.
+    await expectOverlay(page, /Runtime error/i);
 
     const after = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     expect(after).toBe(before);

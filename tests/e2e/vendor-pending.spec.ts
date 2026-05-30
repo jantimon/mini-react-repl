@@ -3,34 +3,23 @@
  * 0.13.0: <ReplProvider/> renders children immediately, <ReplPreview/> shows
  * a sized placeholder, and the iframe mounts once the promise resolves.
  *
- * Driven via the fixture's `?slowVendor` hook (see `examples/e2e-fixture/src/App.tsx`)
- * which builds a never-resolved promise and exposes `window.__resolveVendor`
- * / `window.__rejectVendor` so we drive the transition deterministically.
+ * Driven via the fixture's `?slowVendor` mode, whose vendor promise gates on a
+ * `/__vendor-gate__` request that Playwright holds, then answers 200 (resolve)
+ * or 503 (reject) — see ./support/vendor.
  */
 
-import { test, expect, type Page, type ConsoleMessage } from '@playwright/test';
-
-declare global {
-  interface Window {
-    __resolveVendor?: () => void;
-    __rejectVendor?: (msg?: string) => void;
-  }
-}
-
-async function gotoPending(page: Page) {
-  await page.goto('/?test&slowVendor');
-  // Wait until the slow-vendor hooks are installed on window so the test
-  // can drive resolution without racing the React mount.
-  await page.waitForFunction(() => typeof window.__resolveVendor === 'function');
-}
+import { test, expect, type ConsoleMessage } from '@playwright/test';
+import { preview } from './support/editor';
+import { installVendorGate } from './support/vendor';
 
 test.describe('vendor pending state', () => {
   test('placeholder shows while promise pending; iframe mounts on resolve', async ({ page }) => {
-    await gotoPending(page);
+    const gate = await installVendorGate(page);
+    await page.goto('/?slowVendor');
+    await gate.requested;
 
-    // Placeholder div renders immediately while vendor resolves. Uses a
-    // distinct class from the real iframe so frameLocator selectors only
-    // match the real iframe once it mounts.
+    // Placeholder div renders immediately while vendor resolves. Distinct class
+    // from the real iframe so frameLocator only matches once it mounts.
     const placeholder = page.locator('div.repl-iframe-placeholder');
     await expect(placeholder).toBeVisible();
     await expect(placeholder).toHaveAttribute('aria-busy', 'true');
@@ -38,22 +27,21 @@ test.describe('vendor pending state', () => {
     // The real iframe is NOT in the DOM yet.
     await expect(page.locator('iframe.repl-iframe')).toHaveCount(0);
 
-    // File tabs / editor host should render during the pending window —
-    // proof that <ReplProvider/> no longer null-renders its children.
+    // File tabs render during the pending window — proof that <ReplProvider/>
+    // no longer null-renders its children.
     await expect(page.locator('.repl-tabs')).toBeVisible();
-    await expect(page.locator('.repl-tabs .repl-tab')).toHaveCount(2); // App.tsx + Counter.tsx
+    await expect(page.getByRole('tab')).toHaveCount(3); // App.tsx + Counter.tsx + Inbox.tsx
 
-    // Resolve the vendor promise. Provider latches the bundle and
-    // <ReplPreview/> swaps the placeholder for the real iframe.
-    await page.evaluate(() => window.__resolveVendor!());
+    // Resolve the vendor promise; <ReplPreview/> swaps placeholder for iframe.
+    gate.resolve();
 
     await expect(placeholder).toHaveCount(0);
     await expect(page.locator('iframe.repl-iframe')).toHaveCount(1);
 
-    // Iframe boots and the seed app renders end-to-end.
-    const preview = page.frameLocator('iframe.repl-iframe');
-    await expect(preview.locator('h1')).toContainText(/Today is/i, { timeout: 30_000 });
-    await expect(preview.locator('[data-testid=counter]')).toBeVisible();
+    await expect(preview(page).getByRole('heading', { name: /Today is/i })).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(preview(page).getByRole('button', { name: /count:/ })).toBeVisible();
   });
 
   test('rejected vendor promise keeps placeholder and logs a diagnostic', async ({ page }) => {
@@ -62,21 +50,24 @@ test.describe('vendor pending state', () => {
       if (msg.type() === 'error') errors.push(msg.text());
     });
 
-    await gotoPending(page);
+    const gate = await installVendorGate(page);
+    await page.goto('/?slowVendor');
+    await gate.requested;
 
     const placeholder = page.locator('div.repl-iframe-placeholder');
     await expect(placeholder).toBeVisible();
 
-    await page.evaluate(() => window.__rejectVendor!('boom'));
+    gate.reject();
 
     // Provider has nothing to latch — placeholder stays, iframe never mounts.
     await expect(placeholder).toBeVisible();
     await expect(page.locator('iframe.repl-iframe')).toHaveCount(0);
 
-    // The new console.error path surfaces the rejection so consumers see
-    // *something* in the console instead of a silent forever-spinner.
+    // The rejection surfaces a console diagnostic instead of a silent spinner,
+    // and forwards the underlying reason ('vendor gate failed' — thrown by the
+    // fixture on the 503) rather than swallowing it behind a generic message.
     await expect
-      .poll(() => errors.find((t) => t.includes('vendor promise rejected')))
-      .toContain('boom');
+      .poll(() => errors.find((t) => t.includes('vendor promise rejected')) ?? null)
+      .toContain('vendor gate failed');
   });
 });

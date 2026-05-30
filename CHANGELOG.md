@@ -2,6 +2,16 @@
 
 All notable changes to `mini-react-repl`. Dates are YYYY-MM-DD.
 
+## 0.21.0 — 2026-05-29
+
+### Added
+
+- **The in-preview error overlay now announces via `role="alert"`.** When a
+  transform, module-resolution, or runtime error surfaces, the overlay is
+  exposed to assistive tech as a live region the moment it appears, matching
+  the standalone `<ReplErrorOverlay/>`. No API change — purely an a11y
+  improvement that ships in the bundled runtime.
+
 ## 0.20.0 — 2026-05-29
 
 ### Added

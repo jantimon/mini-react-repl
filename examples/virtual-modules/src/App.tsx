@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Repl, type Files, type VirtualModules } from 'mini-react-repl';
 import { defaultVendor } from 'mini-react-repl/vendor-default';
 import { MonacoReplEditor } from 'mini-react-repl/editor-monaco';
@@ -22,7 +22,7 @@ const INITIAL: Files = {
 export default function App() {
   return (
     <main style={{ padding: 24, fontFamily: 'ui-sans-serif, system-ui' }}>
-      <h1 data-testid="greeting">{greet('world')}</h1>
+      <h1>{greet('world')}</h1>
     </main>
   );
 }
@@ -31,18 +31,6 @@ export default function App() {
 
 export function App() {
   const [files, setFiles] = useState<Files>(INITIAL);
-  const isTestMode =
-    typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('test');
-
-  // Test hook: when ?test is in the URL, expose imperative file mutations on
-  // window so Playwright can drive edits without typing into Monaco.
-  useEffect(() => {
-    if (!isTestMode) return;
-    (window as unknown as { __replTest__: unknown }).__replTest__ = {
-      setFile: (path: string, source: string) => setFiles((f) => ({ ...f, [path]: source })),
-      reset: () => setFiles(INITIAL),
-    };
-  }, [isTestMode]);
 
   return (
     <Repl

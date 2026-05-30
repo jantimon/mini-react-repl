@@ -104,6 +104,9 @@ export function showOverlay(err: OverlayError): void {
 
   const root = document.createElement('div');
   root.className = 'repl-error-overlay';
+  // Announce to assistive tech (and let tests query by role) the moment an
+  // error surfaces. Mirrors the standalone <ReplErrorOverlay/>.
+  root.setAttribute('role', 'alert');
 
   const head = document.createElement('div');
   head.className = 'repl-error-overlay__head';

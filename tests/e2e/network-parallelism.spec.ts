@@ -10,20 +10,16 @@
  * meaningful.
  *
  * Two scenarios:
- *   1. sync vendor (`?test`) — all four overlap.
- *   2. Promise vendor (`?test&slowVendor`) — `worker.js` + `wasm_bg.wasm`
- *      issue while the vendor promise is still pending. This is the load-
- *      bearing guarantee of the refactor: prewarm fires from a `useEffect`
- *      on `<ReplPreviewInner/>` mount, independent of vendor resolution.
+ *   1. sync vendor — all four overlap.
+ *   2. Promise vendor (`?slowVendor`) — `worker.js` + `wasm_bg.wasm` issue
+ *      while the vendor promise is still pending. This is the load-bearing
+ *      guarantee of the refactor: prewarm fires from a `useEffect` on
+ *      `<ReplPreviewInner/>` mount, independent of vendor resolution.
  */
 
 import { test, expect, type Page, type Request } from '@playwright/test';
-
-declare global {
-  interface Window {
-    __resolveVendor?: () => void;
-  }
-}
+import { preview } from './support/editor';
+import { installVendorGate } from './support/vendor';
 
 type Kind = 'types' | 'importMap' | 'worker' | 'wasm';
 
@@ -130,12 +126,13 @@ test.describe('boot assets load in parallel, not in a waterfall', () => {
     // waiting for the `load` event — under throttling that takes longer
     // than the page's 30s default budget. We then drive the test by
     // waiting for the iframe-rendered <h1> instead.
-    await page.goto('/?test', { waitUntil: 'commit' });
+    await page.goto('/', { waitUntil: 'commit' });
 
     // Wait for the iframe app to render so we know all four kinds were
     // requested AND finished (we need their finish timestamps below).
-    const preview = page.frameLocator('iframe.repl-iframe');
-    await expect(preview.locator('h1')).toContainText(/Today is/i, { timeout: 60_000 });
+    await expect(preview(page).getByRole('heading', { name: /Today is/i })).toBeVisible({
+      timeout: 60_000,
+    });
 
     const types = captures.get('types');
     const importMap = captures.get('importMap');
@@ -177,18 +174,19 @@ test.describe('boot assets load in parallel, not in a waterfall', () => {
     page,
   }) => {
     await delayBootAssets(page);
+    // Register the gate AFTER the delay route so it wins for the gate URL.
+    const gate = await installVendorGate(page);
     const captures = trackBootRequests(page);
 
-    await page.goto('/?test&slowVendor', { waitUntil: 'commit' });
-    await page.waitForFunction(() => typeof window.__resolveVendor === 'function');
+    await page.goto('/?slowVendor', { waitUntil: 'commit' });
+    await gate.requested; // the vendor promise is now pending
 
     // The engine should prewarm without waiting for the vendor promise.
-    // Poll until both kinds have been requested.
     await expect.poll(() => Boolean(captures.get('worker')), { timeout: 15_000 }).toBe(true);
     await expect.poll(() => Boolean(captures.get('wasm')), { timeout: 15_000 }).toBe(true);
 
-    // Critically: the dynamic-import vendor chunks are INSIDE the still-
-    // pending promise, so they must NOT have been requested yet.
+    // Critically: the vendor chunks are only accessed once the promise
+    // resolves, so they must NOT have been requested yet.
     expect(
       captures.get('types'),
       'types chunk must not load while vendor promise is pending',
@@ -200,8 +198,9 @@ test.describe('boot assets load in parallel, not in a waterfall', () => {
 
     // Resolve and let the full boot complete — proves the rest still wires
     // up correctly after the prewarmed worker is reused for the session.
-    await page.evaluate(() => window.__resolveVendor!());
-    const preview = page.frameLocator('iframe.repl-iframe');
-    await expect(preview.locator('h1')).toContainText(/Today is/i, { timeout: 60_000 });
+    gate.resolve();
+    await expect(preview(page).getByRole('heading', { name: /Today is/i })).toBeVisible({
+      timeout: 60_000,
+    });
   });
 });

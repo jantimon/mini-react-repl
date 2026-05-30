@@ -1,98 +1,49 @@
 /**
- * E2E test for the `mini-react-repl/inspect` subpath. Drives the demo's
- * `<InspectMode/>` toggle via the `__replTest__` window hooks, clicks an
- * element inside the live iframe, and asserts the resulting `ElementPick`
- * carries the expected source-mapped JSX call site.
+ * E2E test for the `mini-react-repl/inspect` subpath. Drives the demo's real
+ * Inspect toggle button, clicks an element inside the live iframe, and asserts
+ * the resulting source-mapped pick — surfaced by the demo into a visible
+ * status region — carries the expected JSX call site.
  */
 
-import { test, expect, type Page } from '@playwright/test';
-
-type StackFrame = {
-  fileName: string;
-  lineNumber: number;
-  columnNumber: number;
-  componentName: string | null;
-};
-
-type ElementPick = {
-  dom: { tag: string; text: string | null };
-  stack: StackFrame[];
-};
-
-declare global {
-  interface Window {
-    __lastPick?: ElementPick;
-  }
-}
-
-async function gotoDemo(page: Page) {
-  await page.goto('/?test');
-  await page.waitForFunction(() => Boolean(window.__replTest__));
-}
-
-function preview(page: Page) {
-  return page.frameLocator('.repl-iframe');
-}
+import { test, expect } from '@playwright/test';
+import { preview, gotoFixture } from './support/editor';
 
 test.describe('mini-react-repl/inspect', () => {
   test('clicking the seed h1 yields a source-mapped pick', async ({ page }) => {
-    await gotoDemo(page);
-    const h1 = preview(page).locator('h1');
-    await expect(h1).toContainText(/Today is/i, { timeout: 30_000 });
+    await gotoFixture(page);
+    const h1 = preview(page).getByRole('heading', { name: /Today is/i });
 
-    // Reset any leftover pick from prior tests in the same context.
-    await page.evaluate(() => {
-      delete window.__lastPick;
-      window.__replTest__.setInspectActive(true);
-    });
+    await page.getByRole('button', { name: 'Inspect' }).click();
 
-    // Wait until the picker has actually installed its capture-phase click
-    // handler in the iframe — easiest signal: the documentElement carries
-    // the data attribute the picker sets on enable. Read inside the iframe
-    // because `iframe.contentDocument` is null under sandbox="allow-scripts".
+    // Wait until the picker has installed its capture-phase click handler in
+    // the iframe — its enable signal is the data attribute on the docroot.
     await expect(preview(page).locator('html')).toHaveAttribute('data-repl-inspect-active', '', {
       timeout: 5_000,
     });
 
     await h1.click();
 
-    // The picker decodes the source map asynchronously and posts the pick
-    // back; the demo stashes it on `window.__lastPick`.
-    await expect
-      .poll(() => page.evaluate(() => window.__lastPick?.dom?.tag ?? null), { timeout: 5_000 })
-      .toBe('h1');
-
-    const pick = await page.evaluate(() => window.__lastPick);
-    expect(pick).toBeTruthy();
-    expect(pick!.dom.tag).toBe('h1');
-    expect(pick!.dom.text).toMatch(/Today is/);
-
-    // The seed `App.tsx` opens its `<h1>` on line 7 of the user source.
-    // Source-map decoding should land us on that line; React 19's
-    // _debugStack frame carries the JSX call-site position so the line
-    // can be exact, while the column reflects the JSX `<` in source space.
-    expect(pick!.stack.length).toBeGreaterThan(0);
-    const top = pick!.stack[0]!;
-    expect(top.fileName).toBe('App.tsx');
-    expect(top.lineNumber).toBe(7);
-    expect(top.componentName).toBe('App');
+    // The demo renders the decoded pick into a host status region.
+    const pick = page.getByRole('status');
+    await expect(pick).toContainText('<h1>');
+    await expect(pick).toContainText('Today is');
+    // Source-map decoding lands on the App.tsx <h1> (line 8) inside <App>.
+    await expect(pick).toContainText('App.tsx:8');
+    await expect(pick).toContainText('in App');
   });
 
   test('overlay reappears after a pick deactivates inspect', async ({ page }) => {
-    // Regression guard: every activation cycle is a fresh overlay element
-    // (the previous one fades out + removes after disable). If the second-
-    // cycle overlay ever fails to paint, this test catches it.
-    await gotoDemo(page);
-    const h1 = preview(page).locator('h1');
-    const counter = preview(page).locator('[data-testid="counter"]');
-    await expect(h1).toContainText(/Today is/i, { timeout: 30_000 });
+    // Regression guard: every activation cycle is a fresh overlay element (the
+    // previous one fades out + removes after disable). If the second-cycle
+    // overlay ever fails to paint, this test catches it.
+    await gotoFixture(page);
+    const h1 = preview(page).getByRole('heading', { name: /Today is/i });
+    const counter = preview(page).getByRole('button', { name: /count:/ });
 
     const readOverlay = async () => {
-      // Two overlays can briefly coexist after a re-activation: the old one
-      // is fading out (overlay.ts schedules its removal after FADE_MS) while
-      // a fresh element has already been appended. The test cares about the
-      // fresh one — `.last()` reads it deterministically without racing the
-      // fade-out timer.
+      // Two overlays can briefly coexist after re-activation: the old one fades
+      // out (overlay.ts removes it after FADE_MS) while a fresh element is
+      // already appended. `.last()` reads the fresh one without racing the fade.
       const all = preview(page).locator('[data-repl-inspect-overlay]');
       if ((await all.count()) === 0) return null;
       return all.last().evaluate((el) => {
@@ -103,31 +54,23 @@ test.describe('mini-react-repl/inspect', () => {
           display: cs.display,
           backgroundColor: cs.backgroundColor,
           boxShadow: cs.boxShadow,
-          width: e.style.width,
         };
       });
     };
 
     // First cycle: enable → hover → click. The pick auto-disables inspect.
-    await page.evaluate(() => {
-      delete window.__lastPick;
-      window.__replTest__.setInspectActive(true);
-    });
+    await page.getByRole('button', { name: 'Inspect' }).click();
     await h1.hover();
     await expect
       .poll(async () => (await readOverlay())?.opacity ?? null, { timeout: 5_000 })
       .toBe('1');
     await h1.click();
-    await expect
-      .poll(() => page.evaluate(() => window.__lastPick?.dom?.tag ?? null), { timeout: 5_000 })
-      .toBe('h1');
+    await expect(page.getByRole('status')).toContainText('<h1>');
 
-    // Second cycle: re-enable, hover a DIFFERENT element so we get a fresh
-    // mousemove that lands on a fiber-bearing target (h1's lastTarget was
-    // cleared on disable, but counter forces a distinct enter event).
-    await page.evaluate(() => window.__replTest__.setInspectActive(true));
+    // Second cycle: re-enable, hover a DIFFERENT element so a fresh mousemove
+    // lands on a fiber-bearing target and a new overlay paints.
+    await page.getByRole('button', { name: 'Inspect' }).click();
     await counter.hover();
-
     await expect
       .poll(async () => (await readOverlay())?.opacity ?? null, { timeout: 5_000 })
       .toBe('1');
@@ -138,22 +81,19 @@ test.describe('mini-react-repl/inspect', () => {
   });
 
   test('hovering shows the default bluish overlay over the target', async ({ page }) => {
-    await gotoDemo(page);
-    const h1 = preview(page).locator('h1');
-    await expect(h1).toContainText(/Today is/i, { timeout: 30_000 });
+    await gotoFixture(page);
+    const h1 = preview(page).getByRole('heading', { name: /Today is/i });
 
-    await page.evaluate(() => window.__replTest__.setInspectActive(true));
+    await page.getByRole('button', { name: 'Inspect' }).click();
     await expect(preview(page).locator('html')).toHaveAttribute('data-repl-inspect-active', '', {
       timeout: 5_000,
     });
 
     await h1.hover();
 
-    // Read the overlay from the inline style (set deterministically by the
-    // picker after the show-delay timer fires) plus the computed background
-    // and shadow. `getComputedStyle().opacity` would interpolate during the
-    // CSS fade and produce values like "0.43" mid-transition — the inline
-    // value flips cleanly from "0" to "1".
+    // Read the overlay from its inline style (set deterministically after the
+    // show-delay) plus computed background/shadow. `getComputedStyle().opacity`
+    // would interpolate mid-fade; the inline value flips cleanly "0" → "1".
     const readOverlay = async () => {
       const ov = preview(page).locator('[data-repl-inspect-overlay]');
       if ((await ov.count()) === 0) return null;
@@ -169,17 +109,14 @@ test.describe('mini-react-repl/inspect', () => {
       });
     };
 
-    // The picker waits ~100ms after hover before flipping opacity to "1"
-    // (the no-flash delay). Poll up to 5s, well past that.
     await expect
       .poll(async () => (await readOverlay())?.opacity ?? null, { timeout: 5_000 })
       .toBe('1');
 
     const overlayStyle = await readOverlay();
-    // If `ensureOverlay` short-circuits before applying defaults, both
-    // `backgroundColor` and `boxShadow` come back at the UA defaults
-    // ("rgba(0, 0, 0, 0)" / "none") — invisible despite a correctly-sized
-    // box. The bug this test guards against.
+    // If `ensureOverlay` short-circuits before applying defaults, both come
+    // back at UA defaults ("rgba(0, 0, 0, 0)" / "none") — invisible despite a
+    // correctly-sized box. The bug this test guards against.
     expect(overlayStyle!.backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
     expect(overlayStyle!.boxShadow).not.toBe('none');
     expect(overlayStyle!.width).not.toBe('');
