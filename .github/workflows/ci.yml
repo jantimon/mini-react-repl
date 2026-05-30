@@ -16,6 +16,7 @@ jobs:
   lint-and-test:
     name: typecheck + unit
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -45,6 +46,7 @@ jobs:
     name: library + examples build
     runs-on: ubuntu-latest
     needs: lint-and-test
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -64,6 +66,7 @@ jobs:
     name: e2e (chromium)
     runs-on: ubuntu-latest
     needs: lint-and-test
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -81,10 +84,30 @@ jobs:
       # is built by `pnpm run build`, not present at install time.
       - run: pnpm install --frozen-lockfile
 
-      - name: install playwright chromium
+      # Cache the downloaded browser (~170 MB) keyed on the lockfile, so the
+      # flaky cdn.playwright.dev download only runs on a genuine miss. Hangs
+      # there once burned a full 6h against the runner ceiling.
+      - name: cache playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: install playwright chromium (+ system deps)
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 8
         run: pnpm exec playwright install --with-deps chromium
 
+      # On a cache hit the browser binary is restored, but apt-level system
+      # deps are not — install just those (fast; most are preinstalled).
+      - name: install playwright system deps
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        timeout-minutes: 5
+        run: pnpm exec playwright install-deps chromium
+
       - run: pnpm test:e2e
+        timeout-minutes: 10
 
       - if: failure()
         uses: actions/upload-artifact@v4
