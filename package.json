@@ -1,6 +1,6 @@
 {
   "name": "mini-react-repl",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "description": "Browser-only React TSX REPL — multi-file editor, live preview, real Fast Refresh, no backend.",
   "keywords": [
     "fast-refresh",
@@ -88,7 +88,9 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "format": "oxfmt",
-    "format:check": "oxfmt --check"
+    "format:check": "oxfmt --check",
+    "verify": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run build && pnpm run test && pnpm run test:e2e",
+    "prepublishOnly": "pnpm run verify"
   },
   "dependencies": {
     "@jridgewell/trace-mapping": "^0.3.31",

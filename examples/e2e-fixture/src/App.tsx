@@ -10,14 +10,14 @@ import 'mini-react-repl/theme.css';
 import swcWasmUrl from '@swc/wasm-web/wasm_bg.wasm?url';
 
 const HELLO: Files = {
-  'App.tsx': `import { format } from 'date-fns';
+  'App.tsx': `import dayjs from 'dayjs';
 import { Counter } from './Counter';
 import { Inbox } from './Inbox';
 
 export default function App() {
   return (
     <main style={{ padding: 24, fontFamily: 'ui-sans-serif, system-ui' }}>
-      <h1>Today is {format(new Date(), 'eeee')}</h1>
+      <h1>Today is {dayjs().format('dddd')}</h1>
       <Counter />
       <Inbox />
     </main>

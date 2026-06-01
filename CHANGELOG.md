@@ -2,6 +2,33 @@
 
 All notable changes to `mini-react-repl`. Dates are YYYY-MM-DD.
 
+## 0.23.0 — 2026-06-01
+
+### Changed
+
+- **BREAKING: `date-fns` and `lodash-es` dropped from the default vendor.**
+  The default set is now `react`, `react-dom`, the JSX runtimes, and `dayjs`
+  only. The two libraries were by far the heaviest entries in the inlined
+  default bundle — together ~507 kB of the import-map JS and ~876 kB of the
+  pre-baked `.d.ts` (the bulk of that being the full `@types/lodash` tree,
+  578 of the 592 `.d.ts` files). Removing them cuts the default
+  `vendor-default/import-map.json` from ~1.63 MB → ~1.12 MB raw (≈289 kB →
+  ≈202 kB gzipped) and `types.json` from ~1.95 MB → ~1.08 MB.
+
+  In 2026, modern browsers cover most of what these libraries did (native
+  `Object.groupBy`, `structuredClone`, `Intl` date formatting, array helpers),
+  and the opt-in `cdn` prop lazy-loads either of them — or anything else — from
+  esm.sh on demand. `dayjs` stays in the default set because it covers the
+  common date-formatting case at ~4 kB gzipped.
+
+### Migration
+
+- If your REPL content imports `date-fns` or `lodash-es` and relies on the
+  default vendor, either add the `cdn` prop
+  (`import { createEsmShCdnHandler } from 'mini-react-repl/cdn-esmsh'`) or ship
+  a custom vendor bundle that re-adds them — see the "Mix" section of the
+  README.
+
 ## 0.22.0 — 2026-06-01
 
 ### Added

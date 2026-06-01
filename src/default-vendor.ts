@@ -8,8 +8,6 @@
 
 export * from './vendor-base.ts';
 
-import * as dateFns from 'date-fns';
 import * as dayjs from 'dayjs';
-import * as lodashEs from 'lodash-es';
 
-export { dateFns as 'date-fns', dayjs, lodashEs as 'lodash-es' };
+export { dayjs };

@@ -46,14 +46,15 @@ test.describe('editor TypeScript diagnostics', () => {
   test('surfaces a real type error from vendor types', async ({ page }) => {
     await gotoFixture(page);
 
-    // Misuse date-fns `format` (too few arguments). The error only appears if
-    // the vendor.types pipeline reached Monaco's TS service end-to-end.
+    // Misuse dayjs `format` (a number where it wants a string template). The
+    // error only appears if the vendor.types pipeline reached Monaco's TS
+    // service end-to-end.
     await setEditorText(
       page,
       'App.tsx',
-      `import { format } from 'date-fns'
+      `import dayjs from 'dayjs'
 export default function App() {
-  return <h1>{String(format(new Date()))}</h1>
+  return <h1>{String(dayjs().format(123))}</h1>
 }
 `,
     );

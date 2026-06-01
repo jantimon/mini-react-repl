@@ -40,13 +40,13 @@ Refresh, no backend, no SSR, no server-side bundling.
 ## What you get
 
 - multi-file TSX/TS/CSS, with imports across files
-- bare specifier imports (`import { format } from 'date-fns'`) for a curated
+- bare specifier imports (`import dayjs from 'dayjs'`) for a curated
   vendor set, swappable for your own
 - React Fast Refresh — component state survives edits
 - inline source maps so stack traces point at your `.tsx`, not transpiled JS
 - Monaco gets pre-configured (automatic JSX, ES2022, bundler resolution) and
   pre-baked `.d.ts` for the curated vendor set — real squiggles + hover for
-  `react`, `react-dom`, `date-fns`, `dayjs`, `lodash-es` out of the box
+  `react`, `react-dom`, `dayjs` out of the box
 - strictly controlled state. you own the file table. persistence, sharing,
   undo, multi-tab sync — all yours to wire up however
 
@@ -150,7 +150,7 @@ top-level throw): it remounts the iframe and re-runs every transform.
 
 ## Vendor
 
-The vendor bundle is what lets `import { format } from 'date-fns'` work. it's
+The vendor bundle is what lets `import dayjs from 'dayjs'` work. it's
 a curated, prebuilt set of ESM modules + an import map.
 
 ### Default
@@ -162,10 +162,16 @@ import { defaultVendor } from 'mini-react-repl/vendor-default'
 ```
 
 includes: `react@19`, `react-dom@19`, `react/jsx-runtime`,
-`react/jsx-dev-runtime`, `date-fns@3`, `dayjs@1`, `lodash-es@4`. inlined as
-base64 data URLs so it works under srcdoc with zero hosting setup. ~150 kB
-gzipped JS, plus pre-baked `.d.ts` (`vendor.types`) so Monaco shows real
+`react/jsx-dev-runtime`, `dayjs@1`. inlined as
+base64 data URLs so it works under srcdoc with zero hosting setup. ~200 kB
+gzipped JS (most of it the development build of `react-dom`, which Fast
+Refresh needs), plus pre-baked `.d.ts` (`vendor.types`) so Monaco shows real
 red squiggles + hover signatures for the same packages.
+
+`date-fns` and `lodash-es` were dropped from the default set in 0.23.0 — modern
+browsers cover most of what they did, and the `cdn` prop lazy-loads them (or
+anything else) from esm.sh when you actually need them. see
+[Lazy npm via esm.sh](#lazy-npm-via-esmsh).
 
 the import map and the `.d.ts` payload are both code-split. the import-map
 chunk loads when `<Repl/>` mounts; the types chunk loads when an editor
@@ -232,9 +238,9 @@ Wire it into your build via an npm script (`"build:vendor":
 
 ### Mix
 
-To use both the default vendor's libraries (date-fns, dayjs, lodash-es)
-and your own additions, copy them into your `vendor.entry.ts` and add
-yours alongside:
+To put back libraries that aren't in the default set (e.g. `date-fns` and
+`lodash-es`, dropped in 0.23.0) alongside your own additions, declare them
+all in one `vendor.entry.ts`:
 
 ```ts
 // src/sandbox/vendor.entry.ts
@@ -268,7 +274,7 @@ const VIRTUAL_MODULES = {
 User code in the REPL can `import { greet } from '@app/util'` — the iframe
 runtime executes it; Monaco autocompletes against the source. No bundling,
 no hosting, no import-map entry. Virtuals can import each other and any
-vendor package (`react`, `date-fns`, …) — the iframe's existing dep
+vendor package (`react`, `dayjs`, …) — the iframe's existing dep
 substitution and the import map handle both.
 
 **Boot-time only.** Snapshotted on first mount, identical to `vendor`.
@@ -615,7 +621,7 @@ The interesting part, and the part that took the longest to get right.
    strips types, transforms JSX (automatic runtime), and injects React
    Refresh signatures.
 3. main thread takes the JS back, runs an import-rewrite pass:
-   - bare specifiers (`'react'`, `'date-fns'`) are left alone — the iframe
+   - bare specifiers (`'react'`, `'dayjs'`) are left alone — the iframe
      has a native `<script type="importmap">` that resolves them
    - relative specifiers (`'./Counter'`) get rewritten to the current blob
      URL of that logical path
@@ -722,7 +728,7 @@ deep. you don't have to think about it.
 
 **can I get TypeScript red squiggles for the vendor libs?**
 yes — the default vendor pre-bakes `.d.ts` for `react`, `react-dom`,
-`date-fns`, `dayjs`, `lodash-es`, and `MonacoReplEditor` registers them with
+`dayjs`, and `MonacoReplEditor` registers them with
 Monaco's TS service via `addExtraLib`. for custom vendors, `repl-vendor-build`
 emits a `types.json` next to `import-map.json` in the generated folder. swc
 still strips types at runtime — diagnostics are editor-side only and don't
