@@ -25,6 +25,19 @@ export type PreviewHtmlOptions = {
    * direct callers must pass a resolved (sync) `ImportMap`.
    */
   importMap: ImportMap;
+  /**
+   * Value for the `<base href>` emitted as the first URL-bearing element in
+   * `<head>`. Root-relative URLs in user code (e.g. `<img src="/img/x.png">`)
+   * would otherwise resolve against the sandboxed `blob:` origin — which has
+   * no server behind it — and fail. Pointing the base at a real origin makes
+   * them resolve there instead.
+   *
+   * Omitted (`undefined`) defaults to the current page's
+   * `window.location.origin` (with a trailing `/`), or to nothing when
+   * `window` is undefined (SSR). Pass `null` to suppress the `<base>` tag
+   * entirely.
+   */
+  baseHref?: string | null;
   /** Raw HTML injected into `<head>` before the import map. */
   headHtml?: string;
   /** Raw HTML injected into `<body>` after the React mount node. */
@@ -41,16 +54,29 @@ export type PreviewHtmlOptions = {
  * caller wraps this in a Blob and assigns the resulting `blob:` URL to
  * the iframe's `src`.
  *
- * Idempotent and pure — same options produce the same string. Cheap enough
- * to call inside React render, but `<ReplPreview/>` memoizes anyway.
+ * Pure given its options, except that an omitted `baseHref` reads
+ * `window.location.origin` — pass an explicit `baseHref` (or `null`) for a
+ * deterministic result. Cheap enough to call inside React render, but
+ * `<ReplPreview/>` memoizes anyway.
  */
 export function generatePreviewHtml(options: PreviewHtmlOptions): string {
   const overlayAttr = options.showErrorOverlay === false ? 'data-overlay="off"' : '';
+  // `<base>` only governs URLs that follow it in source order, so it must be
+  // the first URL-bearing element — ahead of both `headHtml` and the import
+  // map. `undefined` falls back to the live origin (client-only); `null` opts
+  // out. Stays empty under SSR where there's no `window`.
+  const baseHref =
+    options.baseHref === undefined
+      ? typeof window !== 'undefined'
+        ? `${window.location.origin}/`
+        : null
+      : options.baseHref;
+  const baseTag = baseHref ? `<base href="${baseHref}">\n` : '';
   return `<!doctype html>
 <html lang="en" ${overlayAttr}>
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+${baseTag}<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Preview</title>
 ${options.headHtml ?? ''}
 <script type="importmap">${JSON.stringify(options.importMap)}</script>

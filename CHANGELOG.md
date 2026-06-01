@@ -2,6 +2,21 @@
 
 All notable changes to `mini-react-repl`. Dates are YYYY-MM-DD.
 
+## 0.22.0 — 2026-06-01
+
+### Added
+
+- **New `baseHref` prop sets the preview's `<base href>`.** The preview
+  document loads from a sandboxed `blob:` URL, so root-relative URLs in user
+  code (e.g. `<img src="/img/yak-jumping.png">`) resolved against the opaque
+  `blob:` origin — which has no server behind it — and failed. A `<base>` is
+  now emitted as the first element in `<head>` (ahead of `headHtml` and the
+  import map, so it governs their URLs too), defaulting to the embedder's
+  `window.location.origin`. Pass a custom origin to point assets elsewhere, or
+  `baseHref={null}` to omit the tag. Available on `<Repl>`, `<ReplPreview>`,
+  and `generatePreviewHtml`. Server-rendered output omits it (no `window`),
+  matching the client-only preview.
+
 ## 0.21.0 — 2026-05-29
 
 ### Added

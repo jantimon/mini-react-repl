@@ -52,6 +52,7 @@ export type ReplProps = ReplProviderProps &
 export function Repl(props: ReplProps): React.ReactElement {
   const {
     editor,
+    baseHref,
     headHtml,
     bodyHtml,
     showPreviewErrorOverlay,
@@ -79,6 +80,7 @@ export function Repl(props: ReplProps): React.ReactElement {
         </div>
         <div className="repl-root__side">
           <ReplPreview
+            baseHref={baseHref}
             headHtml={headHtml}
             bodyHtml={bodyHtml}
             showPreviewErrorOverlay={showPreviewErrorOverlay}

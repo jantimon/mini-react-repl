@@ -46,6 +46,15 @@ import { SHELL_PATH, withShellFile } from './shell.ts';
 export const DEFAULT_SANDBOX = 'allow-scripts allow-forms';
 
 export type ReplPreviewProps = {
+  /**
+   * Value for the preview document's `<base href>`. Root-relative URLs in
+   * user code (e.g. `<img src="/img/x.png">`) resolve against this origin
+   * instead of the sandboxed `blob:` origin, which has no server behind it.
+   *
+   * Defaults to the embedder's `window.location.origin`. Pass `null` to omit
+   * the `<base>` tag entirely.
+   */
+  baseHref?: string | null;
   headHtml?: string;
   bodyHtml?: string;
   showPreviewErrorOverlay?: boolean;
@@ -207,11 +216,12 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
         ? null
         : generatePreviewHtml({
             importMap,
+            baseHref: props.baseHref,
             headHtml: props.headHtml,
             bodyHtml: props.bodyHtml,
             showErrorOverlay: showOverlay,
           }),
-    [importMap, client, props.headHtml, props.bodyHtml, showOverlay],
+    [importMap, client, props.baseHref, props.headHtml, props.bodyHtml, showOverlay],
   );
 
   // React 19 callback ref with cleanup. Attaches listener + session

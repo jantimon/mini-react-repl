@@ -25,6 +25,18 @@ describe('preview-html', () => {
     expect(html.indexOf('id="root"')).toBeLessThan(html.indexOf('id="extra"'));
   });
 
+  it('emits a <base> before the import map when baseHref is given', () => {
+    const html = generatePreviewHtml({ importMap, baseHref: 'https://docs.example.com/' });
+    expect(html).toContain('<base href="https://docs.example.com/">');
+    expect(html.indexOf('<base ')).toBeLessThan(html.indexOf('<script type="importmap">'));
+    expect(html.indexOf('<base ')).toBeLessThan(html.indexOf('<meta name="viewport"'));
+  });
+
+  it('omits the <base> tag when baseHref is null', () => {
+    const html = generatePreviewHtml({ importMap, baseHref: null });
+    expect(html).not.toContain('<base ');
+  });
+
   it('disables overlay when showErrorOverlay is false', () => {
     const html = generatePreviewHtml({ importMap, showErrorOverlay: false });
     expect(html).toContain('data-overlay="off"');

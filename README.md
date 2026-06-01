@@ -98,6 +98,7 @@ import {
 | `sandbox`                 | `string`                                          | no       | `'allow-scripts allow-forms'` | iframe `sandbox` tokens; pass extras to extend                                      |
 | `unsafeDropSandbox`       | `true`                                            | no       | —                             | drop the `sandbox` attribute entirely (only for fully trusted code)                 |
 | `virtualModules`          | `Record<string, string>`                          | no       | —                             | inline modules user code can import; see [Virtual modules](#virtual-modules)        |
+| `baseHref`                | `string \| null`                                  | no       | `window.location.origin`      | `<base href>` for root-relative URLs in user code; `null` omits it                  |
 | `headHtml`                | `string`                                          | no       | `''`                          | injected into iframe `<head>`                                                       |
 | `bodyHtml`                | `string`                                          | no       | `''`                          | injected into iframe `<body>`                                                       |
 | `showPreviewErrorOverlay` | `boolean`                                         | no       | `true`                        | toggle built-in overlay                                                             |
@@ -497,6 +498,18 @@ The preview is a srcdoc. you can inject into it:
 `headHtml` runs **before** the import map and runtime, so don't try to use
 the registry from there. `bodyHtml` is appended after `#root`, run anything
 that should run after the React root mounts.
+
+The preview document is loaded from a sandboxed `blob:` URL, so root-relative
+URLs in user code (e.g. `<img src="/img/yak-jumping.png">`) would resolve
+against the opaque `blob:` origin — which has no server behind it — and fail.
+A `<base href>` is emitted as the first element in `<head>` to re-point those
+URLs at a real origin. It defaults to the embedder's `window.location.origin`;
+override it for a different asset host, or pass `baseHref={null}` to drop the
+tag entirely.
+
+```tsx
+<ReplPreview baseHref="https://cdn.example.com/" />
+```
 
 if you want Tailwind in your previews this is where it goes. the library
 doesn't bundle it.
