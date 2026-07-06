@@ -1,4 +1,55 @@
+import { readFile } from 'node:fs/promises';
+import type { Plugin } from 'esbuild';
 import { defineConfig, type Options } from 'tsup';
+
+// Swap `./create-worker.ts` imports for the bare `#create-worker` specifier,
+// resolved by consumers through the conditional `imports` entry in
+// package.json: browsers get the real `new Worker(new URL(...))` module,
+// Node/SSR bundles get the throwing stub — so server-targeted bundlers never
+// see the worker or the swc wasm behind it. Source keeps the relative import
+// so tsc/vitest/editors resolve it without extra config.
+const externalizeCreateWorker: Plugin = {
+  name: 'externalize-create-worker',
+  setup(build) {
+    build.onResolve({ filter: /^\.\/create-worker\.ts$/ }, (args) => {
+      if (args.kind === 'entry-point') return null;
+      return { path: '#create-worker', external: true };
+    });
+  },
+};
+
+// @swc/wasm-web's init glue defaults its wasm location to
+// `new URL('wasm_bg.wasm', import.meta.url)`. Our worker always passes an
+// explicit URL, so the branch is dead — but once the glue is inlined into
+// dist/worker.js the relative URL points at a file this package doesn't ship,
+// and bundlers that statically resolve `new URL(..., import.meta.url)`
+// (webpack, Rspack, Vite) fail the *consumer's* build on it. Replace the
+// fallback with a throw. Erroring when the pattern is missing is the point:
+// an @swc/wasm-web bump that reshapes the glue must fail our build, not
+// silently reintroduce the broken URL.
+const stripSwcWasmUrlFallback: Plugin = {
+  name: 'strip-swc-wasm-url-fallback',
+  setup(build) {
+    build.onLoad({ filter: /@swc[\\/]wasm-web[\\/]wasm\.js$/ }, async (args) => {
+      const source = await readFile(args.path, 'utf8');
+      const fallback = "module_or_path = new URL('wasm_bg.wasm', import.meta.url);";
+      if (!source.includes(fallback)) {
+        throw new Error(
+          `strip-swc-wasm-url-fallback: expected wasm URL fallback not found in ${args.path} — ` +
+            'the @swc/wasm-web glue changed shape; update the pattern so the dead ' +
+            '`new URL` cannot leak back into dist/worker.js.',
+        );
+      }
+      return {
+        contents: source.replace(
+          fallback,
+          "throw new Error('@swc/wasm-web init requires an explicit wasm URL (mini-react-repl always passes one)');",
+        ),
+        loader: 'js',
+      };
+    });
+  },
+};
 
 const shared = {
   format: ['esm'],
@@ -41,8 +92,13 @@ export default defineConfig([
     entry: {
       index: 'src/index.ts',
       // Worker output at dist/worker.js so `new URL('./worker.js', import.meta.url)`
-      // inside dist/index.js resolves correctly.
+      // inside dist/create-worker.js resolves correctly.
       worker: 'src/engine/worker.ts',
+      // Conditional pair behind the `#create-worker` imports entry: browsers
+      // get the worker constructor, Node/SSR bundles get the throwing stub.
+      // Both live at the dist root so the relative worker URL stays valid.
+      'create-worker': 'src/engine/create-worker.ts',
+      'create-worker.node': 'src/engine/create-worker.node.ts',
       'editor-monaco/index': 'src/editor-monaco/index.tsx',
       // SSR no-op stub. Selected by the `node` export condition so that
       // server-side bundlers don't pull in monaco-editor (which touches
@@ -63,6 +119,7 @@ export default defineConfig([
     // '@swc/wasm-web'` that consumer bundlers (Rolldown in particular) inline
     // verbatim into a `data:` URL where bare specifiers can't resolve.
     noExternal: ['@swc/wasm-web'],
+    esbuildPlugins: [externalizeCreateWorker, stripSwcWasmUrlFallback],
   },
   {
     ...shared,

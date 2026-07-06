@@ -1,6 +1,6 @@
 {
   "name": "mini-react-repl",
-  "version": "0.23.0",
+  "version": "0.23.1",
   "description": "Browser-only React TSX REPL — multi-file editor, live preview, real Fast Refresh, no backend.",
   "keywords": [
     "fast-refresh",
@@ -38,6 +38,12 @@
   "sideEffects": [
     "**/*.css"
   ],
+  "imports": {
+    "#create-worker": {
+      "node": "./dist/create-worker.node.js",
+      "default": "./dist/create-worker.js"
+    }
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

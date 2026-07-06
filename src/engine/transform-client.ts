@@ -27,6 +27,9 @@ import {
   VIRTUAL_KEY_PREFIX,
   type BareSpecifierResolution,
 } from './import-rewriter.ts';
+// Rewritten to `#create-worker` at build time (see tsup.config.ts) so server
+// bundles resolve the Node stub via the package.json `imports` condition.
+import { createTransformWorker } from './create-worker.ts';
 import { PackageManifest, PACKAGE_JSON_PATH } from './package-manifest.ts';
 import { defaultLoader } from './default-loader.ts';
 import { resolveRelative } from './path-utils.ts';
@@ -209,7 +212,7 @@ export class TransformClient {
   ensureWorker(): Promise<void> {
     if (this.workerReady) return this.workerReady;
     this.workerReady = new Promise<void>((resolve, reject) => {
-      const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+      const worker = createTransformWorker();
       const wasmUrl = this.opts.swcWasmUrl ?? DEFAULT_SWC_WASM_URL;
       this.worker = worker;
 
