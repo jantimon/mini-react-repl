@@ -26,6 +26,7 @@ import * as RefreshRuntime from 'react-refresh/runtime';
 import type { ToIframe, FromIframe, ModulePayload } from './protocol.ts';
 import { showOverlay, hideOverlay, setOverlayEnabled, type OverlayError } from './overlay.ts';
 import { wrapModuleBody } from './module-wrapper.ts';
+import { buildDataUrlLabels, sanitizeStack } from './sanitize-stack.ts';
 
 declare global {
   interface Window {
@@ -288,7 +289,39 @@ window.addEventListener('unhandledrejection', (event) => {
   });
 });
 
+// Lazy — the import map script tag is static in <head>, but most sessions
+// never throw, so don't parse it until the first error.
+let dataUrlLabels: Map<string, string> | null = null;
+function getDataUrlLabels(): Map<string, string> {
+  if (!dataUrlLabels) {
+    let imports: Record<string, string> = {};
+    try {
+      const el = document.querySelector('script[type="importmap"]');
+      if (el?.textContent) {
+        imports =
+          (JSON.parse(el.textContent) as { imports?: Record<string, string> }).imports ?? {};
+      }
+    } catch {
+      // Malformed import map — the module loader would have complained
+      // already; fall through to bare truncation.
+    }
+    dataUrlLabels = buildDataUrlLabels(imports);
+  }
+  return dataUrlLabels;
+}
+
 function reportRuntimeError(err: OverlayError): void {
+  if (err.kind === 'runtime') {
+    // Vendor modules load from multi-megabyte data: URLs, and every stack
+    // frame inside them repeats the full URL. Shrink to import-map
+    // specifiers before the stack hits the overlay DOM or postMessage.
+    const labels = getDataUrlLabels();
+    err = {
+      ...err,
+      message: sanitizeStack(err.message, labels),
+      stack: sanitizeStack(err.stack, labels),
+    };
+  }
   showOverlay(err);
   if (err.kind === 'runtime') {
     postToParent({
