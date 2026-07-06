@@ -2,7 +2,24 @@
 
 All notable changes to `mini-react-repl`. Dates are YYYY-MM-DD.
 
-## 0.23.0 — 2026-06-01
+## 0.23.1 — 2026-07-06
+
+### Fixed
+
+- **Rspack/webpack/Vite no longer choke on the dead swc wasm URL.**
+  `dist/worker.js` inlined `@swc/wasm-web`'s init glue, whose default
+  `new URL('wasm_bg.wasm', import.meta.url)` fallback pointed at a file this
+  package doesn't ship. The branch never ran (the worker always passes an
+  explicit wasm URL), but bundlers resolve `new URL(..., import.meta.url)`
+  statically and failed the consumer's build on the missing asset. The
+  fallback is now stripped at build time. If you patched `dist/worker.js` or
+  disabled `new URL` parsing to work around this, you can drop the workaround.
+- **Server bundles no longer pull in the transform worker.** The
+  `new Worker(new URL('./worker.js', import.meta.url))` expression moved out
+  of `dist/index.js` into a `#create-worker` module with a conditional
+  `imports` entry: bundlers targeting Node (Next.js app router server bundles,
+  Vite `ssr.noExternal`) resolve a small throwing stub instead of compiling
+  the worker + swc wasm glue for the server. Browser bundles are unchanged.
 
 ### Changed
 
