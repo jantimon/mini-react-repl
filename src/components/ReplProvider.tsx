@@ -64,6 +64,15 @@ type ReplProviderBaseProps = {
   /** Self-hosted swc-wasm URL. **Boot-time only.** */
   swcWasmUrl?: string;
   /**
+   * React Fast Refresh. `false` keeps its transforms out of the compiled
+   * output — for a read-only preview whose files never change after boot.
+   * Edits still apply, but each one re-boots the preview and loses component
+   * state. **Boot-time only.**
+   *
+   * @defaultValue `true`
+   */
+  hmr?: boolean;
+  /**
    * Pre-processor invoked once per file. Lets you turn arbitrary file types
    * (`.sqlite`, `.md`, `.json`, ...) into a JS module or CSS. Return `null`
    * to fall through to the built-in extension dispatch. **Boot-time only.**
@@ -280,6 +289,7 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
   // forwarded through props on every render.
   const entry = useFreezeValue(props.entry ?? 'App.tsx', 'entry');
   const swcWasmUrl = useFreezeValue(props.swcWasmUrl, 'swcWasmUrl');
+  const hmr = useFreezeValue(props.hmr ?? true, 'hmr');
   const loader = useFreezeValue(props.loader, 'loader');
   const cdn = useFreezeValue(props.cdn, 'cdn');
   const virtualModulesProp = useFreezeValue(props.virtualModules, 'virtualModules');
@@ -412,6 +422,7 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
       importMap: props.importMap,
       types: props.types,
       swcWasmUrl,
+      hmr,
       loader,
       cdn,
       virtualModules,
@@ -430,6 +441,7 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
       props.importMap,
       props.types,
       swcWasmUrl,
+      hmr,
       loader,
       cdn,
       virtualModules,

@@ -54,6 +54,11 @@ export type TransformError = {
 export type TransformClientOptions = {
   /** URL of swc-wasm. Pass a self-hosted path for offline / strict CSP. */
   swcWasmUrl?: string;
+  /**
+   * Whether swc emits React Refresh signatures. `false` keeps them out of
+   * every transformed module. Defaults to `true`.
+   */
+  hmr?: boolean;
   /** Idle ms before transforming after the latest edit. */
   debounceMs?: number;
   /**
@@ -214,6 +219,7 @@ export class TransformClient {
     this.workerReady = new Promise<void>((resolve, reject) => {
       const worker = createTransformWorker();
       const wasmUrl = this.opts.swcWasmUrl ?? DEFAULT_SWC_WASM_URL;
+      const hmr = this.opts.hmr ?? true;
       this.worker = worker;
 
       let initSent = false;
@@ -224,7 +230,7 @@ export class TransformClient {
             if (!initSent) {
               initSent = true;
               const id = ++this.requestId;
-              worker.postMessage({ kind: 'init', id, wasmUrl });
+              worker.postMessage({ kind: 'init', id, wasmUrl, hmr });
             }
             return;
           case 'init-ok':

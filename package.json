@@ -90,7 +90,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p examples/e2e-fixture && tsc --noEmit -p examples/gh-pages && tsc --noEmit -p examples/custom-vendor && tsc --noEmit -p examples/virtual-modules && tsc --noEmit -p examples/cdn-esmsh && tsc --noEmit -p examples/transform && tsc --noEmit -p examples/starter",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p examples/e2e-fixture && tsc --noEmit -p examples/gh-pages && tsc --noEmit -p examples/custom-vendor && tsc --noEmit -p examples/virtual-modules && tsc --noEmit -p examples/cdn-esmsh && tsc --noEmit -p examples/transform && tsc --noEmit -p examples/starter && tsc --noEmit -p examples/readonly-preview",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "format": "oxfmt",

@@ -125,6 +125,7 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
   const setLastError = actions.setLastError;
   const entry = actions.entry;
   const swcWasmUrl = actions.swcWasmUrl;
+  const hmr = actions.hmr;
   const loader = actions.loader;
   const cdn = actions.cdn;
   const virtualModulesRaw = actions.virtualModules;
@@ -188,6 +189,7 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
     };
     const c = new TransformClient({
       ...(swcWasmUrl ? { swcWasmUrl } : {}),
+      hmr,
       loader,
       virtualModules: virtualModulesRaw,
       onWorkerError: reportWorkerError,
@@ -210,6 +212,11 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
   // runs once per attach.
   const sessionRef = useRef<TransformSession | null>(null);
 
+  // Bumped to force a fresh iframe (and with it a fresh cold boot) when
+  // there's no Refresh to apply an edit. Scoped here, not to the provider's
+  // `reloadPreview`, so the client and its worker survive the turnover.
+  const [iframeKey, setIframeKey] = useState(0);
+
   const srcdoc = useMemo(
     () =>
       importMap === null || client === null
@@ -220,8 +227,9 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
             headHtml: props.headHtml,
             bodyHtml: props.bodyHtml,
             showErrorOverlay: showOverlay,
+            hmr,
           }),
-    [importMap, client, props.baseHref, props.headHtml, props.bodyHtml, showOverlay],
+    [importMap, client, props.baseHref, props.headHtml, props.bodyHtml, showOverlay, hmr],
   );
 
   // React 19 callback ref with cleanup. Attaches listener + session
@@ -404,8 +412,16 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
   const initialFilesRef = useRef(filesForEngine);
   useEffect(() => {
     if (filesForEngine === initialFilesRef.current) return;
+    if (!hmr) {
+      // Remounting re-runs the cold-boot path, which rebuilds the whole graph
+      // from the latest files — the only correct update without Refresh. Keeps
+      // the client (and its instantiated wasm) alive; only the iframe turns
+      // over.
+      setIframeKey((key) => key + 1);
+      return;
+    }
     void sessionRef.current?.setFiles(filesForEngine);
-  }, [filesForEngine]);
+  }, [filesForEngine, hmr]);
 
   const sandbox = props.unsafeDropSandbox ? undefined : (props.sandbox ?? DEFAULT_SANDBOX);
 
@@ -423,6 +439,7 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
         />
       ) : (
         <iframe
+          key={iframeKey}
           ref={setupIframe}
           className="repl-iframe"
           title="preview"

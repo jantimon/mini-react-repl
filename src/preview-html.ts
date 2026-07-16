@@ -47,6 +47,13 @@ export type PreviewHtmlOptions = {
    * flow to the parent via `onPreviewError`. Defaults to `true`.
    */
   showErrorOverlay?: boolean;
+  /**
+   * If `false`, the Fast Refresh preamble is omitted and the runtime is told
+   * to skip Refresh via `data-hmr="off"`. Pair with the transform's matching
+   * `hmr` flag, which is what stops swc emitting the Refresh calls the
+   * preamble would serve. Defaults to `true`.
+   */
+  hmr?: boolean;
 };
 
 /**
@@ -60,7 +67,14 @@ export type PreviewHtmlOptions = {
  * `<ReplPreview/>` memoizes anyway.
  */
 export function generatePreviewHtml(options: PreviewHtmlOptions): string {
-  const overlayAttr = options.showErrorOverlay === false ? 'data-overlay="off"' : '';
+  const hmr = options.hmr !== false;
+  const htmlAttrs = [
+    'lang="en"',
+    options.showErrorOverlay === false ? 'data-overlay="off"' : '',
+    hmr ? '' : 'data-hmr="off"',
+  ]
+    .filter(Boolean)
+    .join(' ');
   // `<base>` only governs URLs that follow it in source order, so it must be
   // the first URL-bearing element — ahead of both `headHtml` and the import
   // map. `undefined` falls back to the live origin (client-only); `null` opts
@@ -73,7 +87,7 @@ export function generatePreviewHtml(options: PreviewHtmlOptions): string {
       : options.baseHref;
   const baseTag = baseHref ? `<base href="${baseHref}">\n` : '';
   return `<!doctype html>
-<html lang="en" ${overlayAttr}>
+<html ${htmlAttrs}>
 <head>
 <meta charset="utf-8" />
 ${baseTag}<meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -89,8 +103,12 @@ ${options.headHtml ?? ''}
 <body>
 <div id="root"></div>
 ${options.bodyHtml ?? ''}
-<!-- preamble: installs the React Refresh hook before React initializes -->
-<script type="module">${PREAMBLE_CODE}</script>
+${
+  hmr
+    ? `<!-- preamble: installs the React Refresh hook before React initializes -->
+<script type="module">${PREAMBLE_CODE}</script>`
+    : ''
+}
 <script type="module">${RUNTIME_CODE}</script>
 </body>
 </html>`;

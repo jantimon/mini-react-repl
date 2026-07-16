@@ -87,29 +87,30 @@ import {
 
 ### `<Repl/>` props
 
-| prop                      | type                                              | required | default                       |                                                                                     |
-| ------------------------- | ------------------------------------------------- | -------- | ----------------------------- | ----------------------------------------------------------------------------------- |
-| `files`                   | `Record<string, string>`                          | yes      | —                             | flat path → source map                                                              |
-| `onFilesChange`           | `(next) => void`                                  | yes      | —                             | called on every set/remove/rename                                                   |
-| `vendor`                  | `VendorBundle \| Promise<{ default }>`            | yes      | —                             | `{ importMap, types? }`; promise/thunk forms code-split it                          |
-| `editor`                  | `React.FC<ReplEditorProps>`                       | yes      | —                             | adapter component                                                                   |
-| `entry`                   | `string`                                          | no       | `'App.tsx'`                   | the logical entry path                                                              |
-| `transformDebounceMs`     | `number`                                          | no       | `150`                         |                                                                                     |
-| `sandbox`                 | `string`                                          | no       | `'allow-scripts allow-forms'` | iframe `sandbox` tokens; pass extras to extend                                      |
-| `unsafeDropSandbox`       | `true`                                            | no       | —                             | drop the `sandbox` attribute entirely (only for fully trusted code)                 |
-| `virtualModules`          | `Record<string, string>`                          | no       | —                             | inline modules user code can import; see [Virtual modules](#virtual-modules)        |
-| `baseHref`                | `string \| null`                                  | no       | `window.location.origin`      | `<base href>` for root-relative URLs in user code; `null` omits it                  |
-| `headHtml`                | `string`                                          | no       | `''`                          | injected into iframe `<head>`                                                       |
-| `bodyHtml`                | `string`                                          | no       | `''`                          | injected into iframe `<body>`                                                       |
-| `showPreviewErrorOverlay` | `boolean`                                         | no       | `true`                        | toggle built-in overlay                                                             |
-| `onPreviewError`          | `(err: ReplError) => void`                        | no       | —                             | transform + runtime errors                                                          |
-| `onMounted`               | `() => void`                                      | no       | —                             | fires when the iframe runtime mounts the entry module                               |
-| `iframeRef`               | `Ref<HTMLIFrameElement>`                          | no       | —                             | forwarded to the underlying `<iframe>`; `postMessage` host data in                  |
-| `onAddFile`               | `() => MaybePromise<string \| null \| undefined>` | no       | —                             | custom add-file dialog; return the new path, or nullish to cancel                   |
-| `onDeleteFile`            | `(path) => MaybePromise<boolean \| void>`         | no       | —                             | confirm/cancel deletion; return `false` to cancel                                   |
-| `swcWasmUrl`              | `string`                                          | no       | jsdelivr CDN                  | self-host this for offline / CI                                                     |
-| `loader`                  | `ReplLoader`                                      | no       | —                             | per-file pre-processor; see [Custom file types](#custom-file-types)                 |
-| `cdn`                     | `ReplCdnResolver`                                 | no       | —                             | lazy-load bare specifiers off a CDN; see [Lazy npm via esm.sh](#lazy-npm-via-esmsh) |
+| prop                      | type                                              | required | default                       |                                                                                                  |
+| ------------------------- | ------------------------------------------------- | -------- | ----------------------------- | ------------------------------------------------------------------------------------------------ |
+| `files`                   | `Record<string, string>`                          | yes      | —                             | flat path → source map                                                                           |
+| `onFilesChange`           | `(next) => void`                                  | yes      | —                             | called on every set/remove/rename                                                                |
+| `vendor`                  | `VendorBundle \| Promise<{ default }>`            | yes      | —                             | `{ importMap, types? }`; promise/thunk forms code-split it                                       |
+| `editor`                  | `React.FC<ReplEditorProps>`                       | yes      | —                             | adapter component                                                                                |
+| `entry`                   | `string`                                          | no       | `'App.tsx'`                   | the logical entry path                                                                           |
+| `transformDebounceMs`     | `number`                                          | no       | `150`                         |                                                                                                  |
+| `sandbox`                 | `string`                                          | no       | `'allow-scripts allow-forms'` | iframe `sandbox` tokens; pass extras to extend                                                   |
+| `unsafeDropSandbox`       | `true`                                            | no       | —                             | drop the `sandbox` attribute entirely (only for fully trusted code)                              |
+| `virtualModules`          | `Record<string, string>`                          | no       | —                             | inline modules user code can import; see [Virtual modules](#virtual-modules)                     |
+| `baseHref`                | `string \| null`                                  | no       | `window.location.origin`      | `<base href>` for root-relative URLs in user code; `null` omits it                               |
+| `headHtml`                | `string`                                          | no       | `''`                          | injected into iframe `<head>`                                                                    |
+| `bodyHtml`                | `string`                                          | no       | `''`                          | injected into iframe `<body>`                                                                    |
+| `showPreviewErrorOverlay` | `boolean`                                         | no       | `true`                        | toggle built-in overlay                                                                          |
+| `onPreviewError`          | `(err: ReplError) => void`                        | no       | —                             | transform + runtime errors                                                                       |
+| `onMounted`               | `() => void`                                      | no       | —                             | fires when the iframe runtime mounts the entry module                                            |
+| `iframeRef`               | `Ref<HTMLIFrameElement>`                          | no       | —                             | forwarded to the underlying `<iframe>`; `postMessage` host data in                               |
+| `onAddFile`               | `() => MaybePromise<string \| null \| undefined>` | no       | —                             | custom add-file dialog; return the new path, or nullish to cancel                                |
+| `onDeleteFile`            | `(path) => MaybePromise<boolean \| void>`         | no       | —                             | confirm/cancel deletion; return `false` to cancel                                                |
+| `swcWasmUrl`              | `string`                                          | no       | jsdelivr CDN                  | self-host this for offline / CI                                                                  |
+| `hmr`                     | `boolean`                                         | no       | `true`                        | `false` drops Fast Refresh for read-only previews; see [Read-only previews](#read-only-previews) |
+| `loader`                  | `ReplLoader`                                      | no       | —                             | per-file pre-processor; see [Custom file types](#custom-file-types)                              |
+| `cdn`                     | `ReplCdnResolver`                                 | no       | —                             | lazy-load bare specifiers off a CDN; see [Lazy npm via esm.sh](#lazy-npm-via-esmsh)              |
 
 ### `useRepl()`
 
@@ -145,6 +146,39 @@ top-level throw): it remounts the iframe and re-runs every transform.
 ```
 
 `ReplProvider` is just context + the engine. lay it out however.
+
+### Read-only previews
+
+Fast Refresh is on by default. If the preview renders a fixed set of files that
+never change after boot — an embedded docs example, a published snapshot — pass
+`hmr={false}`:
+
+```tsx
+<Repl files={files} onFilesChange={setFiles} vendor={vendor} editor={MyEditor} hmr={false} />
+```
+
+swc then emits no Refresh signatures, the preamble script is dropped, and
+modules are wrapped without the Refresh prologue. What's left in each compiled
+module is your code — no `$RefreshReg$`/`$RefreshSig$` registrations, no
+prologue aliasing them, and no Refresh work on every module commit. Step
+through a module in devtools and that's what you read.
+
+It won't change your stack traces: Refresh registrations run at module scope,
+so they're never on the stack when something throws. This is about the artifact,
+not the error report.
+
+Editing still works — but every change costs a full re-boot of the preview, so
+component state is lost. Fast Refresh is what makes a cheaper update possible;
+without it a per-module patch can't be correct anyway, since a rebuilt module's
+importers still hold the old blob URL. Leave `hmr` alone for anything users type
+into.
+
+Element inspection is unaffected. `hmr` is boot-time only — remount the provider
+with a different `key` to change it.
+
+See `examples/readonly-preview` for a docs-style embedded example: no editor at
+all, just `ReplProvider` + `ReplPreview`, with a tab bar that swaps `files`
+between prepared snippets.
 
 ---
 

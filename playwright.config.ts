@@ -48,5 +48,11 @@ export default defineConfig({
       reuseExistingServer: !process.env.CI,
       timeout: 60_000,
     },
+    {
+      command: 'pnpm --filter readonly-preview-example dev',
+      url: 'http://localhost:5177',
+      reuseExistingServer: !process.env.CI,
+      timeout: 60_000,
+    },
   ],
 });

@@ -96,6 +96,8 @@ export type ReplActionsContextValue = {
   types: Resolvable<TypeBundle> | undefined;
   /** swc-wasm URL override (snapshotted on first mount). */
   swcWasmUrl: string | undefined;
+  /** Whether Fast Refresh is wired up (snapshotted on first mount). */
+  hmr: boolean;
   /** Optional file pre-processor (snapshotted on first mount). */
   loader: ReplLoader | undefined;
   /**

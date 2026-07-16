@@ -87,6 +87,49 @@ describe('wrapModuleBody', () => {
   });
 });
 
+describe('wrapModuleBody with hmr disabled', () => {
+  it('emits no Refresh plumbing at all', () => {
+    const out = wrapModuleBody('/src/App.tsx', 'export default () => null;', false);
+    expect(out).not.toContain('$RefreshReg$');
+    expect(out).not.toContain('$RefreshSig$');
+    expect(out).not.toContain('refresh.register');
+  });
+
+  it('still commits the module so the registry marks it evaluated', () => {
+    // commit() is what sets `evaluated`, independent of Refresh. Without the
+    // prologue's `__repl__` alias it has to reach through `window`.
+    const out = wrapModuleBody('/src/App.tsx', 'body', false);
+    expect(out).toContain('window.__repl__.commit("/src/App.tsx");');
+  });
+
+  it('still appends the sourceURL pragma on the last line', () => {
+    const out = wrapModuleBody('/My Project/a.tsx', 'body', false);
+    expect(out.split('\n').pop()).toBe('//# sourceURL=/My%20Project/a.tsx');
+  });
+
+  it('starts with the user body, so nothing shifts the generated lines', () => {
+    const out = wrapModuleBody('/x.ts', '/* USER_BODY */', false);
+    expect(out.split('\n')[0]).toBe('/* USER_BODY */');
+  });
+
+  it('leaves the inline source map byte-exact', () => {
+    // Nothing is prepended, so the mappings must not gain a leading `;`.
+    // This is what keeps stack traces pointing at the right source line.
+    const original = makeInlineMap({
+      version: 3,
+      sources: ['App.tsx'],
+      mappings: 'AAAA,BBBB;CCCC,DDDD',
+    });
+    const out = wrapModuleBody('/App.tsx', `const x = 1;\n${original}`, false);
+    expect(out).toContain(original);
+    expect(readInlineMap(out).mappings).toBe('AAAA,BBBB;CCCC,DDDD');
+  });
+
+  it('defaults to hmr enabled when the flag is omitted', () => {
+    expect(wrapModuleBody('/x.ts', 'body')).toContain('$RefreshReg$');
+  });
+});
+
 describe('shiftInlineSourceMap', () => {
   it('prepends N semicolons to the mappings string', () => {
     const input = makeInlineMap({ version: 3, sources: [], mappings: 'AAAA' });

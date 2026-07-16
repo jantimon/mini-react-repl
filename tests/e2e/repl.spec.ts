@@ -118,6 +118,26 @@ export default function App() {
     await expect(page.getByRole('log')).toHaveText('preview error: runtime');
   });
 
+  test('showPreviewErrorOverlay={false} hides the overlay but still reports the error', async ({
+    page,
+  }) => {
+    await gotoFixture(page);
+    await page.getByRole('checkbox', { name: 'Show error overlay' }).uncheck();
+
+    await setEditorText(
+      page,
+      'App.tsx',
+      `export default function App() {
+  throw new Error('boom from user code');
+}
+`,
+    );
+
+    // The callback is the documented channel once the overlay is suppressed.
+    await expect(page.getByRole('log')).toHaveText('preview error: runtime');
+    await expectNoOverlay(page);
+  });
+
   test('iframeRef forwards to <iframe>; host can postMessage in', async ({ page }) => {
     await gotoFixture(page);
 
