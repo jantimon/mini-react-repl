@@ -7,5 +7,14 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": []
+  "ignore": [
+    "cdn-esmsh-example",
+    "custom-vendor",
+    "e2e-fixture",
+    "gh-pages",
+    "readonly-preview-example",
+    "starter",
+    "transform-example",
+    "virtual-modules-example"
+  ]
 }

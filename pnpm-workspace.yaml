@@ -1,2 +1,8 @@
 packages:
+  # The library itself, and the only package that publishes. pnpm links the root
+  # either way, but changesets reads these globs to find releasable packages — a
+  # changeset for `mini-react-repl` errors without this.
+  - '.'
+  # Private demos. Add new ones to `ignore` in .changeset/config.json too, or
+  # every release patch-bumps them and writes each a CHANGELOG.
   - 'examples/*'
