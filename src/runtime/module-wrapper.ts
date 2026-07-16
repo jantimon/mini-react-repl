@@ -2,8 +2,13 @@
  * Wraps a transformed module's body with the Fast Refresh hook plumbing
  * and a `//# sourceURL` pragma so DevTools / stack traces attribute the
  * frame to the original path instead of the blob: URL.
+ *
+ * With `hmr: false` the Refresh plumbing is omitted: swc emitted no
+ * `$RefreshReg$` / `$RefreshSig$` calls to serve, so the only wrapping left
+ * is the `commit` epilogue and the pragma. Nothing is prepended, so the
+ * body's inline source map passes through byte-exact.
  */
-export function wrapModuleBody(path: string, body: string): string {
+export function wrapModuleBody(path: string, body: string, hmr = true): string {
   const safe = JSON.stringify(path);
   // V8's sourceURL parser is `[^\s'"]*` and the comment is line-terminated
   // by \n, \r, U+2028, U+2029. Percent-encode anything in either set so a
@@ -11,6 +16,10 @@ export function wrapModuleBody(path: string, body: string): string {
   // close the pragma. encodeURIComponent leaves `'` alone, so handle it
   // explicitly.
   const sourceURL = path.replace(/[\s'"]/g, (ch) => (ch === "'" ? '%27' : encodeURIComponent(ch)));
+  if (!hmr) {
+    // `__repl__` is a prologue-local alias, so reach through `window` here.
+    return [body, `window.__repl__.commit(${safe});`, `//# sourceURL=${sourceURL}`].join('\n');
+  }
   // Joined onto one line so the body shifts by exactly one generated line.
   const prologue = [
     `const __repl__ = window.__repl__;`,

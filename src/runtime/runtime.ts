@@ -28,6 +28,11 @@ import { showOverlay, hideOverlay, setOverlayEnabled, type OverlayError } from '
 import { wrapModuleBody } from './module-wrapper.ts';
 import { buildDataUrlLabels, sanitizeStack } from './sanitize-stack.ts';
 
+// Set by `generatePreviewHtml` on the document element. Read from
+// `document`, not `window.frameElement` (the overlay's channel), because
+// frameElement is null across the preview's opaque sandbox origin.
+const HMR = document.documentElement.dataset['hmr'] !== 'off';
+
 declare global {
   interface Window {
     /** Used by transformed user code; do not touch directly. */
@@ -127,7 +132,10 @@ const replRuntime: ReplRuntime = {
   commit(path) {
     const rec = ensureRecord(path);
     rec.evaluated = true;
-    scheduleRefresh();
+    // Without Refresh there is nothing to hot-apply; the parent re-boots
+    // the whole graph instead (a rebuilt module's importers still hold the
+    // old blob URL, so a per-module update can't be correct).
+    if (HMR) scheduleRefresh();
   },
 };
 
@@ -161,7 +169,7 @@ function buildBlobUrl(payload: ModulePayload): string {
     code = code.split(`'${dep.specifier}'`).join(`'${targetUrl}'`);
     code = code.split(`"${dep.specifier}"`).join(`"${targetUrl}"`);
   }
-  const wrapped = wrapModuleBody(payload.path, code);
+  const wrapped = wrapModuleBody(payload.path, code, HMR);
   // Stash the wrapped source so the inspect picker (and any other in-iframe
   // tooling) can read the inline source map without re-fetching the blob.
   // Memory cost is one string per module — acceptable in a dev sandbox.

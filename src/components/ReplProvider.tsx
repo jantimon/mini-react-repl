@@ -64,6 +64,20 @@ type ReplProviderBaseProps = {
   /** Self-hosted swc-wasm URL. **Boot-time only.** */
   swcWasmUrl?: string;
   /**
+   * React Fast Refresh. `false` suits a read-only preview whose files never
+   * change after boot: swc emits no Refresh signatures, the preamble script
+   * is dropped, and modules are wrapped without the Refresh prologue — so
+   * user stack traces carry no Refresh frames.
+   *
+   * Editing still works, but every change costs a full re-boot of the
+   * preview (component state is lost), because Fast Refresh is what makes a
+   * cheaper update possible. Element inspection is unaffected.
+   * **Boot-time only.**
+   *
+   * @defaultValue `true`
+   */
+  hmr?: boolean;
+  /**
    * Pre-processor invoked once per file. Lets you turn arbitrary file types
    * (`.sqlite`, `.md`, `.json`, ...) into a JS module or CSS. Return `null`
    * to fall through to the built-in extension dispatch. **Boot-time only.**
@@ -280,6 +294,7 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
   // forwarded through props on every render.
   const entry = useFreezeValue(props.entry ?? 'App.tsx', 'entry');
   const swcWasmUrl = useFreezeValue(props.swcWasmUrl, 'swcWasmUrl');
+  const hmr = useFreezeValue(props.hmr ?? true, 'hmr');
   const loader = useFreezeValue(props.loader, 'loader');
   const cdn = useFreezeValue(props.cdn, 'cdn');
   const virtualModulesProp = useFreezeValue(props.virtualModules, 'virtualModules');
@@ -412,6 +427,7 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
       importMap: props.importMap,
       types: props.types,
       swcWasmUrl,
+      hmr,
       loader,
       cdn,
       virtualModules,
@@ -430,6 +446,7 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
       props.importMap,
       props.types,
       swcWasmUrl,
+      hmr,
       loader,
       cdn,
       virtualModules,

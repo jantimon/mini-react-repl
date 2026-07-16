@@ -108,6 +108,7 @@ import {
 | `onAddFile`               | `() => MaybePromise<string \| null \| undefined>` | no       | —                             | custom add-file dialog; return the new path, or nullish to cancel                   |
 | `onDeleteFile`            | `(path) => MaybePromise<boolean \| void>`         | no       | —                             | confirm/cancel deletion; return `false` to cancel                                   |
 | `swcWasmUrl`              | `string`                                          | no       | jsdelivr CDN                  | self-host this for offline / CI                                                     |
+| `hmr`                     | `boolean`                                         | no       | `true`                        | `false` drops Fast Refresh; see [Read-only previews](#read-only-previews)           |
 | `loader`                  | `ReplLoader`                                      | no       | —                             | per-file pre-processor; see [Custom file types](#custom-file-types)                 |
 | `cdn`                     | `ReplCdnResolver`                                 | no       | —                             | lazy-load bare specifiers off a CDN; see [Lazy npm via esm.sh](#lazy-npm-via-esmsh) |
 
@@ -145,6 +146,30 @@ top-level throw): it remounts the iframe and re-runs every transform.
 ```
 
 `ReplProvider` is just context + the engine. lay it out however.
+
+### Read-only previews
+
+Fast Refresh is on by default. If the preview renders a fixed set of files that
+never change after boot — an embedded docs example, a published snapshot — pass
+`hmr={false}`:
+
+```tsx
+<Repl files={files} onFilesChange={setFiles} vendor={vendor} editor={MyEditor} hmr={false} />
+```
+
+swc then emits no Refresh signatures, the preamble script is dropped, and
+modules are wrapped without the Refresh prologue. The point is what your users
+see when something throws: no Refresh frames in the stack, and the source map
+passes through byte-exact instead of being shifted past the prologue.
+
+Editing still works — but every change costs a full re-boot of the preview, so
+component state is lost. Fast Refresh is what makes a cheaper update possible;
+without it a per-module patch can't be correct anyway, since a rebuilt module's
+importers still hold the old blob URL. Leave `hmr` alone for anything users type
+into.
+
+Element inspection is unaffected. `hmr` is boot-time only — remount the provider
+with a different `key` to change it.
 
 ---
 

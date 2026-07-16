@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { generatePreviewHtml } from '../../src/preview-html.ts';
 
+function countModuleScripts(html: string): number {
+  return html.split('<script type="module">').length - 1;
+}
+
 describe('preview-html', () => {
   const importMap = { imports: { react: '/vendor/react.js' } };
 
@@ -40,5 +44,30 @@ describe('preview-html', () => {
   it('disables overlay when showErrorOverlay is false', () => {
     const html = generatePreviewHtml({ importMap, showErrorOverlay: false });
     expect(html).toContain('data-overlay="off"');
+  });
+
+  it('emits the Refresh preamble by default', () => {
+    const html = generatePreviewHtml({ importMap });
+    expect(html).toContain('preamble');
+    expect(html).not.toContain('data-hmr="off"');
+  });
+
+  it('drops the Refresh preamble and flags the runtime when hmr is false', () => {
+    const html = generatePreviewHtml({ importMap, hmr: false });
+    expect(html).toContain('data-hmr="off"');
+    expect(html).not.toContain('preamble');
+    expect(html).not.toContain('injectIntoGlobalHook');
+  });
+
+  it('still emits the runtime script when hmr is false', () => {
+    // Only the preamble is conditional — the runtime owns the whole module
+    // registry and postMessage protocol, Refresh or not.
+    expect(countModuleScripts(generatePreviewHtml({ importMap }))).toBe(2);
+    expect(countModuleScripts(generatePreviewHtml({ importMap, hmr: false }))).toBe(1);
+  });
+
+  it('combines the overlay and hmr opt-outs without mangling the html tag', () => {
+    const html = generatePreviewHtml({ importMap, showErrorOverlay: false, hmr: false });
+    expect(html).toContain('<html lang="en" data-overlay="off" data-hmr="off">');
   });
 });

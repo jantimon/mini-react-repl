@@ -20,6 +20,11 @@ type InitMessage = {
    * via `<Repl swcWasmUrl="/swc.wasm" />`.
    */
   wasmUrl: string;
+  /**
+   * Whether to emit React Refresh signatures. `false` drops them from every
+   * transformed module — see `<Repl hmr={false} />`.
+   */
+  hmr: boolean;
 };
 
 type TransformMessage = {
@@ -56,6 +61,9 @@ export type WorkerMessage =
     };
 
 let initialized: Promise<void> | null = null;
+// Boot config the transform handler reads back. `ensureInit` memoizes on the
+// wasm binary, so this is assigned by the init handler instead of in there.
+let hmrEnabled = true;
 
 async function ensureInit(wasmUrl: string): Promise<void> {
   if (!initialized) {
@@ -70,6 +78,7 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
   const msg = event.data;
   if (msg.kind === 'init') {
     try {
+      hmrEnabled = msg.hmr;
       await ensureInit(msg.wasmUrl);
       self.postMessage({ kind: 'init-ok', id: msg.id });
     } catch (err) {
@@ -109,8 +118,10 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
           transform: {
             react: {
               runtime: 'automatic',
+              // Stays on regardless of `hmr`: it emits jsxDEV, which carries
+              // the debug info the element picker reads off the fiber.
               development: true,
-              refresh: true,
+              refresh: hmrEnabled,
             },
           },
         },

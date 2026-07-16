@@ -123,8 +123,10 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
   if (!state || !actions) throw new Error('<ReplPreview/> must be inside <ReplProvider/>');
 
   const setLastError = actions.setLastError;
+  const reloadPreview = actions.reloadPreview;
   const entry = actions.entry;
   const swcWasmUrl = actions.swcWasmUrl;
+  const hmr = actions.hmr;
   const loader = actions.loader;
   const cdn = actions.cdn;
   const virtualModulesRaw = actions.virtualModules;
@@ -188,6 +190,7 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
     };
     const c = new TransformClient({
       ...(swcWasmUrl ? { swcWasmUrl } : {}),
+      hmr,
       loader,
       virtualModules: virtualModulesRaw,
       onWorkerError: reportWorkerError,
@@ -220,8 +223,9 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
             headHtml: props.headHtml,
             bodyHtml: props.bodyHtml,
             showErrorOverlay: showOverlay,
+            hmr,
           }),
-    [importMap, client, props.baseHref, props.headHtml, props.bodyHtml, showOverlay],
+    [importMap, client, props.baseHref, props.headHtml, props.bodyHtml, showOverlay, hmr],
   );
 
   // React 19 callback ref with cleanup. Attaches listener + session
@@ -291,6 +295,12 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
           onModule: (m) => {
             if (!booted) {
               collected.push(m);
+            } else if (!hmr) {
+              // No Refresh to hot-apply the module, and a per-module update
+              // can't work anyway: this module's importers already baked the
+              // old blob URL. Re-boot instead. Concurrent onModule calls
+              // batch into a single remount.
+              reloadPreview();
             } else {
               send({ kind: 'load', module: m });
               // A successful module load implicitly clears prior transform
@@ -392,7 +402,7 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
         URL.revokeObjectURL(blobUrl);
       };
     },
-    [client, srcdoc, iframeRegistry, setLastError, cdn, vendorKeys],
+    [client, srcdoc, iframeRegistry, setLastError, cdn, vendorKeys, hmr, reloadPreview],
   );
 
   // Forward file changes into the live session. The initial value is *not*
