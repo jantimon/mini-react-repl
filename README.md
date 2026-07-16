@@ -171,6 +171,10 @@ into.
 Element inspection is unaffected. `hmr` is boot-time only — remount the provider
 with a different `key` to change it.
 
+See `examples/readonly-preview` for a docs-style embedded example: no editor at
+all, just `ReplProvider` + `ReplPreview`, with a tab bar that swaps `files`
+between prepared snippets.
+
 ---
 
 ## Vendor
