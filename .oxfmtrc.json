@@ -11,7 +11,8 @@
     "src/inspect/picker.bundled.ts",
     "src/vendor-default/data-import-map.ts",
     "src/vendor-default/data-types.ts",
-    "examples/*/src/vendor.generated"
+    "examples/*/src/vendor.generated",
+    "CHANGELOG.md"
   ],
   "semi": true,
   "singleQuote": true,
