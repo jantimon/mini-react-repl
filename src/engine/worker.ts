@@ -61,8 +61,8 @@ export type WorkerMessage =
     };
 
 let initialized: Promise<void> | null = null;
-// Boot config the transform handler reads back. `ensureInit` memoizes on the
-// wasm binary, so this is assigned by the init handler instead of in there.
+// One worker per client and one init per worker, so this is written once
+// before any transform can read it (transforms without init are rejected).
 let hmrEnabled = true;
 
 async function ensureInit(wasmUrl: string): Promise<void> {

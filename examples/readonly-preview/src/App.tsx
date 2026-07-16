@@ -9,8 +9,7 @@ import swcWasmUrl from '@swc/wasm-web/wasm_bg.wasm?url';
  * A docs-style embedded example: readers run the code, they don't write it.
  * There's no editor here at all — just `<ReplProvider hmr={false}>` wrapping a
  * `<ReplPreview/>`, which is the whole point of the `hmr` prop. Fast Refresh
- * would be dead weight in the compiled output and noise in any stack trace a
- * reader hits.
+ * would be dead weight in the compiled output of code nobody edits.
  *
  * Picking a different example swaps `files` wholesale, which re-boots the
  * preview. That's the documented trade-off of `hmr={false}` and exactly what

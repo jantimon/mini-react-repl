@@ -123,7 +123,6 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
   if (!state || !actions) throw new Error('<ReplPreview/> must be inside <ReplProvider/>');
 
   const setLastError = actions.setLastError;
-  const reloadPreview = actions.reloadPreview;
   const entry = actions.entry;
   const swcWasmUrl = actions.swcWasmUrl;
   const hmr = actions.hmr;
@@ -213,6 +212,11 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
   // runs once per attach.
   const sessionRef = useRef<TransformSession | null>(null);
 
+  // Bumped to force a fresh iframe (and with it a fresh cold boot) when
+  // there's no Refresh to apply an edit. Scoped here, not to the provider's
+  // `reloadPreview`, so the client and its worker survive the turnover.
+  const [iframeKey, setIframeKey] = useState(0);
+
   const srcdoc = useMemo(
     () =>
       importMap === null || client === null
@@ -295,12 +299,6 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
           onModule: (m) => {
             if (!booted) {
               collected.push(m);
-            } else if (!hmr) {
-              // No Refresh to hot-apply the module, and a per-module update
-              // can't work anyway: this module's importers already baked the
-              // old blob URL. Re-boot instead. Concurrent onModule calls
-              // batch into a single remount.
-              reloadPreview();
             } else {
               send({ kind: 'load', module: m });
               // A successful module load implicitly clears prior transform
@@ -402,7 +400,7 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
         URL.revokeObjectURL(blobUrl);
       };
     },
-    [client, srcdoc, iframeRegistry, setLastError, cdn, vendorKeys, hmr, reloadPreview],
+    [client, srcdoc, iframeRegistry, setLastError, cdn, vendorKeys],
   );
 
   // Forward file changes into the live session. The initial value is *not*
@@ -414,8 +412,16 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
   const initialFilesRef = useRef(filesForEngine);
   useEffect(() => {
     if (filesForEngine === initialFilesRef.current) return;
+    if (!hmr) {
+      // Remounting re-runs the cold-boot path, which rebuilds the whole graph
+      // from the latest files — the only correct update without Refresh. Keeps
+      // the client (and its instantiated wasm) alive; only the iframe turns
+      // over.
+      setIframeKey((key) => key + 1);
+      return;
+    }
     void sessionRef.current?.setFiles(filesForEngine);
-  }, [filesForEngine]);
+  }, [filesForEngine, hmr]);
 
   const sandbox = props.unsafeDropSandbox ? undefined : (props.sandbox ?? DEFAULT_SANDBOX);
 
@@ -433,6 +439,7 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
         />
       ) : (
         <iframe
+          key={iframeKey}
           ref={setupIframe}
           className="repl-iframe"
           title="preview"

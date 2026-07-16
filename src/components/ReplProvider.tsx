@@ -64,15 +64,10 @@ type ReplProviderBaseProps = {
   /** Self-hosted swc-wasm URL. **Boot-time only.** */
   swcWasmUrl?: string;
   /**
-   * React Fast Refresh. `false` suits a read-only preview whose files never
-   * change after boot: swc emits no Refresh signatures, the preamble script
-   * is dropped, and modules are wrapped without the Refresh prologue — so
-   * user stack traces carry no Refresh frames.
-   *
-   * Editing still works, but every change costs a full re-boot of the
-   * preview (component state is lost), because Fast Refresh is what makes a
-   * cheaper update possible. Element inspection is unaffected.
-   * **Boot-time only.**
+   * React Fast Refresh. `false` keeps its transforms out of the compiled
+   * output — for a read-only preview whose files never change after boot.
+   * Edits still apply, but each one re-boots the preview and loses component
+   * state. **Boot-time only.**
    *
    * @defaultValue `true`
    */

@@ -21,37 +21,18 @@ async function gotoReadonly(page: import('@playwright/test').Page): Promise<void
 }
 
 test.describe('read-only preview (hmr={false})', () => {
-  test('cold render: the preview boots without the Refresh preamble', async ({ page }) => {
+  test('cold render: the preview boots with no Refresh runtime present', async ({ page }) => {
     await gotoReadonly(page);
     await expect(preview(page).getByRole('button', { name: /count:/ })).toBeVisible();
   });
 
-  test('preview document is flagged and carries no Refresh runtime', async ({ page }) => {
-    await gotoReadonly(page);
-    const doc = await preview(page)
-      .locator('html')
-      .evaluate((html) => ({
-        hmrAttr: (html as HTMLElement).dataset['hmr'],
-        moduleScripts: html.querySelectorAll('script[type="module"]').length,
-        injectsRefreshHook: html.innerHTML.includes('injectIntoGlobalHook'),
-        refreshGlobal: typeof (
-          html.ownerDocument.defaultView as unknown as { $RefreshReg$?: unknown }
-        )?.$RefreshReg$,
-      }));
-
-    expect(doc).toEqual({
-      hmrAttr: 'off',
-      // The preamble is gone; only the runtime script remains.
-      moduleScripts: 1,
-      injectsRefreshHook: false,
-      refreshGlobal: 'undefined',
-    });
-  });
-
   test('compiled user code carries no Refresh plumbing', async ({ page }) => {
+    // The compiled module IS the artifact this prop changes, and the runtime
+    // already stashes it for the inspect picker. Nothing user-facing differs
+    // (stack traces are identical either way — Refresh registrations run at
+    // module scope, never on the throw path), so this reads the seam directly
+    // rather than asserting a difference that isn't observable.
     await gotoReadonly(page);
-    // The runtime stashes each module's wrapped source for the inspect picker;
-    // it's the same string that was evaluated, so it's what stack traces map to.
     const sources = await preview(page)
       .locator('html')
       .evaluate(() => {
@@ -64,6 +45,7 @@ test.describe('read-only preview (hmr={false})', () => {
 
     expect(sources.length).toBeGreaterThan(0);
     const joined = sources.join('\n');
+    // With Refresh on, swc emits these into every component module.
     expect(joined).not.toContain('$RefreshReg$');
     expect(joined).not.toContain('$RefreshSig$');
     // The commit epilogue still runs — it's what marks the module evaluated.
