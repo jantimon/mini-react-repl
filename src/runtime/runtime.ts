@@ -28,9 +28,8 @@ import { showOverlay, hideOverlay, setOverlayEnabled, type OverlayError } from '
 import { wrapModuleBody } from './module-wrapper.ts';
 import { buildDataUrlLabels, sanitizeStack } from './sanitize-stack.ts';
 
-// Set by `generatePreviewHtml` on the document element. Read from
-// `document`, not `window.frameElement` (the overlay's channel), because
-// frameElement is null across the preview's opaque sandbox origin.
+// Baked into the document by `generatePreviewHtml`. Not `window.frameElement`:
+// that's null across the preview's opaque sandbox origin.
 const HMR = document.documentElement.dataset['hmr'] !== 'off';
 
 declare global {
@@ -455,10 +454,9 @@ window.addEventListener('message', async (event: MessageEvent) => {
 // Overlay enable/disable bridge
 // ─────────────────────────────────────────────────────────────────────
 
-// The parent flips this via a custom data attribute set on the iframe element
-// before sending boot. Polled once at startup; if the parent wants to flip
-// it later, it should send `clear-errors` and the next error will reappear.
-const overlayAttr = (window.frameElement as HTMLIFrameElement | null)?.dataset?.['overlay'];
-if (overlayAttr === 'off') setOverlayEnabled(false);
+// `generatePreviewHtml` bakes this into the document. Read once at startup; to
+// flip it later the parent should send `clear-errors` and the next error will
+// reappear.
+if (document.documentElement.dataset['overlay'] === 'off') setOverlayEnabled(false);
 
 postToParent({ kind: 'ready' });

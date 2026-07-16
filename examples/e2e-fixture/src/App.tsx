@@ -85,6 +85,7 @@ export function App() {
   const [inspectActive, setInspectActive] = useState(false);
   const [lastPick, setLastPick] = useState<ElementPick | null>(null);
   const [lastError, setLastError] = useState<ReplError | null>(null);
+  const [showOverlay, setShowOverlay] = useState(true);
   const [message, setMessage] = useState('');
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
@@ -94,6 +95,16 @@ export function App() {
         <button type="button" onClick={() => setInspectActive((on) => !on)}>
           {inspectActive ? 'Inspecting…' : 'Inspect'}
         </button>
+        {/* Turning the overlay off leaves `onPreviewError` firing — the host
+            keeps the error, the preview just doesn't paint it. */}
+        <label>
+          <input
+            type="checkbox"
+            checked={showOverlay}
+            onChange={(event) => setShowOverlay(event.target.checked)}
+          />
+          Show error overlay
+        </label>
         <input
           aria-label="Message to preview"
           placeholder="message to preview"
@@ -132,6 +143,7 @@ export function App() {
           editor={MonacoReplEditor}
           swcWasmUrl={swcWasmUrl}
           iframeRef={iframeRef}
+          showPreviewErrorOverlay={showOverlay}
           onPreviewError={setLastError}
         >
           <InspectMode
