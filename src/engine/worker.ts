@@ -38,6 +38,12 @@ type TransformMessage = {
    * modules whose path doesn't carry a JS-like extension.
    */
   tsx?: boolean;
+  /**
+   * Whether to emit `jsxDEV`. Comes from the vendor bundle's React build, so
+   * it rides each transform rather than `init` — the worker prewarms before
+   * the vendor resolves. Defaults to `true`.
+   */
+  development?: boolean;
 };
 
 type IncomingMessage = InitMessage | TransformMessage;
@@ -118,10 +124,14 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
           transform: {
             react: {
               runtime: 'automatic',
-              // Stays on regardless of `hmr`: it emits jsxDEV, which carries
-              // the debug info the element picker reads off the fiber.
-              development: true,
-              refresh: hmrEnabled,
+              // Follows the vendor's React build, not `hmr`: jsxDEV carries
+              // the debug info the element picker reads off the fiber, and a
+              // production React doesn't implement it at all.
+              development: msg.development ?? true,
+              // `hmr` is fixed at init, before the vendor is known — so the
+              // production case is re-checked here. Production React has no
+              // Refresh hook for these signatures to reach.
+              refresh: hmrEnabled && (msg.development ?? true),
             },
           },
         },

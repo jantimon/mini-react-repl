@@ -313,6 +313,38 @@ async function loadEsbuild(): Promise<typeof import('esbuild')> {
   return esbuildPromise;
 }
 
+type EsbuildPluginBuild = {
+  onResolve: (
+    opts: { filter: RegExp },
+    cb: (args: { path: string }) => { path: string; external?: boolean } | null,
+  ) => void;
+};
+
+/**
+ * Under `--prod`, `react-refresh/runtime` resolves to a production entry
+ * whose whole body is `throw new Error(...)` — and the iframe runtime imports
+ * it unconditionally, so the preview dies on boot. Pin it to the development
+ * build: nothing calls it once Refresh is off, it just has to import.
+ */
+function refreshRuntimeDevPlugin(cwd: string): {
+  name: string;
+  setup: (b: EsbuildPluginBuild) => void;
+} {
+  return {
+    name: 'refresh-runtime-dev',
+    setup(b) {
+      b.onResolve({ filter: /^react-refresh\/runtime$/ }, () => {
+        const req = createRequire(pathToFileURL(join(cwd, '__entry__.js')).href);
+        // Reached by file path, not specifier: the package's `exports` map
+        // doesn't publish ./cjs/*, and its ./runtime entry is the very
+        // NODE_ENV switch we're stepping around.
+        const dir = dirname(req.resolve('react-refresh/runtime'));
+        return { path: join(dir, 'cjs', 'react-refresh-runtime.development.js') };
+      });
+    },
+  };
+}
+
 async function bundlePackage(
   specifier: string,
   candidateExternals: string[],
@@ -365,21 +397,23 @@ async function bundlePackage(
     // esbuild's built-in `external` matches subpaths too — externalizing
     // `react` would also externalize `react/jsx-runtime` from inside its own
     // bundle and create a self-import. Use a plugin for exact matches only.
-    plugins:
-      candidateExternals.length > 0
+    plugins: [
+      ...(candidateExternals.length > 0
         ? [
             {
               name: 'exact-external',
-              setup(b) {
+              setup(b: EsbuildPluginBuild) {
                 const set = new Set(candidateExternals);
-                b.onResolve({ filter: /.*/ }, (args) => {
+                b.onResolve({ filter: /.*/ }, (args: { path: string }) => {
                   if (set.has(args.path)) return { path: args.path, external: true };
                   return null;
                 });
               },
             },
           ]
-        : [],
+        : []),
+      ...(nodeEnv === 'production' ? [refreshRuntimeDevPlugin(cwd)] : []),
+    ],
   });
   const output = result.outputFiles?.[0]?.text;
   if (!output) throw new Error(`esbuild produced no output for '${specifier}'`);

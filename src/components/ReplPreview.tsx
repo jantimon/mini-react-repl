@@ -131,6 +131,7 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
   const virtualModulesRaw = actions.virtualModules;
   const customShell = actions.shell;
   const importMap = actions.importMap;
+  const development = actions.development;
   const iframeRegistry = actions.iframeRegistry;
 
   // The vendor import map's keys, verbatim. Drives the rewriter's
@@ -206,6 +207,13 @@ function ReplPreviewInner(props: ReplPreviewProps): React.ReactElement {
     // objects/functions.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Tell the client which React the vendor carries, so it only emits jsxDEV
+  // when there's a jsxDEV to call. Lands before the first transform: those
+  // wait on the iframe's `ready`, and the iframe waits on the import map.
+  useEffect(() => {
+    client?.setDevelopment(development);
+  }, [client, development]);
 
   // The live session, set inside the iframe ref callback below. The
   // file-sync effect reads from it to forward edits; the cold-boot path

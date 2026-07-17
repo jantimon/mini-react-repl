@@ -94,6 +94,12 @@ export type ReplActionsContextValue = {
    * resolved yet.
    */
   types: Resolvable<TypeBundle> | undefined;
+  /**
+   * Which React build the vendor carries (`vendor.development`, `true` when
+   * the bundle omits it). `<ReplPreview/>` hands it to the transform, which
+   * only emits `jsxDEV` when the bundled React implements it.
+   */
+  development: boolean;
   /** swc-wasm URL override (snapshotted on first mount). */
   swcWasmUrl: string | undefined;
   /** Whether Fast Refresh is wired up (snapshotted on first mount). */

@@ -113,6 +113,7 @@ export class TransformClient {
   >();
   private disposed = false;
   private currentSession: TransformSession | null = null;
+  private development = true;
   /** Virtual modules: alias → source. Snapshotted at construction. */
   readonly virtualSources: Record<string, string>;
   readonly virtualAliases: ReadonlySet<string>;
@@ -120,6 +121,20 @@ export class TransformClient {
   constructor(readonly opts: TransformClientOptions) {
     this.virtualSources = opts.virtualModules ?? {};
     this.virtualAliases = new Set(Object.keys(this.virtualSources));
+  }
+
+  /**
+   * Declare which React build the vendor carries, so the transform only
+   * emits `jsxDEV` when there's a `jsxDEV` to call. Not a constructor
+   * option: the client is built (and prewarms) before the vendor resolves.
+   *
+   * Always lands before the first transform — those wait on the iframe, and
+   * the iframe waits on the import map.
+   *
+   * @internal
+   */
+  setDevelopment(value: boolean): void {
+    this.development = value;
   }
 
   /**
@@ -209,6 +224,7 @@ export class TransformClient {
         path,
         source,
         tsx,
+        development: this.development,
       });
     });
   }
