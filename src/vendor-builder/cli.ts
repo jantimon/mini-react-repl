@@ -123,7 +123,16 @@ Optional:
       --export-name <name> identifier the generated index.ts exports
                            (default: customVendor)
       --no-types           skip the .d.ts walk (smaller output, no editor type info)
-      --prod               use NODE_ENV=production (default development)
+      --prod               use NODE_ENV=production (default development).
+                           Roughly halves the bundle, and drops React's dev
+                           warnings and per-render profiling. The generated
+                           index.ts records \`development: false\` so the
+                           transform stops emitting jsxDEV to match.
+                           Consequences: no Fast Refresh (production React has
+                           no Refresh hook — <Repl hmr> is forced off), no
+                           <InspectMode/> (no fiber debug info), and terser,
+                           minified React error messages. Suits a read-only
+                           preview; not an editing surface.
   -h, --help               show this help
 
 Output folder layout:
@@ -172,7 +181,11 @@ Example invocation:
  * An SSR window-guard short-circuits the thunks to empty payloads on the
  * server so the JSON chunks aren't pulled into the SSR bundle.
  */
-export function renderIndexTs(opts: { hasTypes: boolean; exportName: string }): string {
+export function renderIndexTs(opts: {
+  hasTypes: boolean;
+  exportName: string;
+  development: boolean;
+}): string {
   const typesProp = opts.hasTypes
     ? `
   types: () =>
@@ -180,6 +193,14 @@ export function renderIndexTs(opts: { hasTypes: boolean; exportName: string }): 
       ? Promise.resolve(EMPTY_TYPE_BUNDLE)
       : import(/* webpackChunkName: "mini-react-repl-types" */ './types.json').then((m) => m.default),`
     : '';
+  // Only emitted for --prod. The field defaults to `true`, so a development
+  // bundle stays byte-identical to what earlier versions produced.
+  const developmentProp = opts.development
+    ? ''
+    : `
+  // Production React: it doesn't implement jsxDEV, so the transform must
+  // not emit it. Fast Refresh and <InspectMode/> don't work against it.
+  development: false,`;
   const emptyTypeConst = opts.hasTypes
     ? `\nconst EMPTY_TYPE_BUNDLE: TypeBundle = { libs: {} };\n`
     : '';
@@ -236,7 +257,7 @@ export const ${opts.exportName}: VendorBundle = {
       ? Promise.resolve(EMPTY_IMPORT_MAP)
       : import(/* webpackChunkName: "mini-react-repl-import-map" */ './import-map.json').then(
           (m) => m.default,
-        ),${typesProp}
+        ),${typesProp}${developmentProp}
 };
 `;
 }
@@ -285,7 +306,15 @@ export async function runBuild(opts: RunBuildOptions): Promise<void> {
   }
 
   const indexPath = join(outDir, 'index.ts');
-  await writeFile(indexPath, renderIndexTs({ hasTypes, exportName: opts.exportName }), 'utf8');
+  await writeFile(
+    indexPath,
+    renderIndexTs({
+      hasTypes,
+      exportName: opts.exportName,
+      development: opts.nodeEnv !== 'production',
+    }),
+    'utf8',
+  );
 
   const files = hasTypes ? 'index.ts, import-map.json, types.json' : 'index.ts, import-map.json';
   process.stderr.write(`✓ wrote ${outDir}/ (${files})\n`);

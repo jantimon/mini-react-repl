@@ -37,4 +37,25 @@ test.describe('custom-vendor demo', () => {
     expect(second).not.toEqual('');
     expect(first).not.toEqual(second);
   });
+
+  // `--prod` had no consumer anywhere, which is how it shipped unable to
+  // render at all: the transform emitted jsxDEV, which production React does
+  // not implement. That failure is loud, so booting the thing is enough.
+  test('a --prod vendor renders, and its dependency still runs', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (err) => errors.push(String(err)));
+
+    await page.goto(`${CUSTOM_VENDOR_URL}?prod`);
+
+    const textbox = preview(page).getByRole('textbox');
+    await expect(textbox).toBeVisible({ timeout: 30_000 });
+
+    await textbox.fill('prod item');
+    await preview(page).getByRole('button', { name: 'add' }).click();
+
+    const items = preview(page).getByRole('listitem');
+    await expect(items).toHaveCount(1);
+    expect(await items.nth(0).locator('code').textContent()).not.toEqual('');
+    expect(errors.join('\n')).not.toContain('jsxDEV');
+  });
 });

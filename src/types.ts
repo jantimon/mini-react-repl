@@ -50,6 +50,20 @@ export type VendorBundle = {
    * consumers never download the chunk.
    */
   types?: Resolvable<TypeBundle>;
+  /**
+   * Which React build this bundle contains. `repl-vendor-build` sets it:
+   * `false` for `--prod`, `true` otherwise. Defaults to `true` when omitted.
+   *
+   * The transform reads it to decide whether to emit `jsxDEV` — production
+   * React exports `jsxDEV` as `undefined`, so a mismatch throws on the first
+   * render. Declaring it here keeps that impossible: the transform always
+   * matches the React it calls into, whatever props the consumer passes.
+   *
+   * A production bundle also has no fiber debug info, so `inspect` can't
+   * work against one, and Fast Refresh has no hook to bind to — pair it with
+   * `hmr={false}` and no `<InspectMode/>`.
+   */
+  development?: boolean;
 };
 
 /**

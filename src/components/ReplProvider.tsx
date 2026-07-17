@@ -211,6 +211,10 @@ export function ReplProvider(props: ReplProviderProps): React.ReactElement {
 
   const [importMap, setImportMap] = useState<ImportMap | null>(initialImportMap);
   const [types, setTypes] = useState<Resolvable<TypeBundle> | undefined>(initialBundle?.types);
+  // Read straight off the bundle like `types`, so it lands no later than
+  // `importMap` — and therefore before any transform, which waits on the
+  // iframe, which waits on the import map.
+  const [development, setDevelopment] = useState<boolean>(initialBundle?.development ?? true);
   // Latched once the bundle is fully resolved. Subsequent prop changes
   // warn in dev and are ignored — vendor is boot-time only, matching
   // `entry` et al.
@@ -245,6 +249,7 @@ export function ReplProvider(props: ReplProviderProps): React.ReactElement {
       // Functional setter — `bundle.types` may itself be a thunk, which the
       // direct setter form would treat as an updater.
       if (bundle.types) setTypes(() => bundle.types);
+      setDevelopment(bundle.development ?? true);
       const mapResult = resolveValue(bundle.importMap, isPlainImportMap);
       const settle = (map: ImportMap): void => {
         if (cancelled) return;
@@ -274,12 +279,15 @@ export function ReplProvider(props: ReplProviderProps): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vendorProp]);
 
-  return <ReplProviderInner {...props} importMap={importMap} types={types} />;
+  return (
+    <ReplProviderInner {...props} importMap={importMap} types={types} development={development} />
+  );
 }
 
 type ReplProviderInnerProps = Omit<ReplProviderProps, 'vendor'> & {
   importMap: ImportMap | null;
   types: Resolvable<TypeBundle> | undefined;
+  development: boolean;
 };
 
 function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
@@ -289,7 +297,11 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
   // forwarded through props on every render.
   const entry = useFreezeValue(props.entry ?? 'App.tsx', 'entry');
   const swcWasmUrl = useFreezeValue(props.swcWasmUrl, 'swcWasmUrl');
-  const hmr = useFreezeValue(props.hmr ?? true, 'hmr');
+  const hmrProp = useFreezeValue(props.hmr ?? true, 'hmr');
+  // A production React has no Refresh hook to bind to, so a prod vendor
+  // settles it regardless of the prop. The vendor's fact beats the
+  // consumer's preference; the reverse would just move the mismatch.
+  const hmr = hmrProp && props.development;
   const loader = useFreezeValue(props.loader, 'loader');
   const cdn = useFreezeValue(props.cdn, 'cdn');
   const virtualModulesProp = useFreezeValue(props.virtualModules, 'virtualModules');
@@ -299,6 +311,23 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
     () => normalizeVirtualModules(virtualModulesProp ?? {}),
     [virtualModulesProp],
   );
+
+  // Dev-only: warn once when an explicit `hmr` is overruled by a production
+  // vendor. Fires only for hmr={true} passed on purpose — the default is
+  // silently settled by the bundle.
+  const hmrWarnedRef = useRef(false);
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'production') return;
+    if (hmrWarnedRef.current) return;
+    if (props.hmr !== true || props.development) return;
+    hmrWarnedRef.current = true;
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[mini-react-repl] <ReplProvider hmr={true}/> with a production vendor bundle. ' +
+        'Production React ships no Refresh hook, so Fast Refresh is off; edits re-boot the preview. ' +
+        'Build the vendor without `--prod` to get Fast Refresh back.',
+    );
+  }, [props.hmr, props.development]);
 
   // Dev-only: warn once when an importMap key is shadowed by a virtualModules
   // alias. Has to wait until the import map resolves; before that there's
@@ -421,6 +450,7 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
       entry,
       importMap: props.importMap,
       types: props.types,
+      development: props.development,
       swcWasmUrl,
       hmr,
       loader,
@@ -440,6 +470,7 @@ function ReplProviderInner(props: ReplProviderInnerProps): React.ReactElement {
       entry,
       props.importMap,
       props.types,
+      props.development,
       swcWasmUrl,
       hmr,
       loader,

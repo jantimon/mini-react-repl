@@ -302,7 +302,11 @@ export { forEach } from 'lodash-es';
 
     describe('renderIndexTs', () => {
       it('emits a VendorBundle with lazy import map AND lazy types when hasTypes: true', () => {
-        const out = renderIndexTs({ hasTypes: true, exportName: 'customVendor' });
+        const out = renderIndexTs({
+          hasTypes: true,
+          exportName: 'customVendor',
+          development: true,
+        });
         // importMap is lazy now — no static `import importMap from ...`
         expect(out).not.toContain("import importMap from './import-map.json'");
         // both chunks are dynamically imported
@@ -329,7 +333,11 @@ export { forEach } from 'lodash-es';
       });
 
       it('omits types wiring (but keeps lazy import map) when hasTypes: false', () => {
-        const out = renderIndexTs({ hasTypes: false, exportName: 'customVendor' });
+        const out = renderIndexTs({
+          hasTypes: false,
+          exportName: 'customVendor',
+          development: true,
+        });
         expect(out).toContain(
           'import(/* webpackChunkName: "mini-react-repl-import-map" */ \'./import-map.json\')',
         );
@@ -341,8 +349,30 @@ export { forEach } from 'lodash-es';
         expect(out).not.toContain('EMPTY_TYPE_BUNDLE');
       });
 
+      it('records development: false so the transform stops emitting jsxDEV', () => {
+        const out = renderIndexTs({
+          hasTypes: true,
+          exportName: 'customVendor',
+          development: false,
+        });
+        expect(out).toContain('development: false,');
+      });
+
+      it('omits development for a dev bundle — the field defaults to true', () => {
+        const out = renderIndexTs({
+          hasTypes: true,
+          exportName: 'customVendor',
+          development: true,
+        });
+        expect(out).not.toContain('development:');
+      });
+
       it('honours --export-name by renaming the exported identifier', () => {
-        const out = renderIndexTs({ hasTypes: true, exportName: 'defaultVendor' });
+        const out = renderIndexTs({
+          hasTypes: true,
+          exportName: 'defaultVendor',
+          development: true,
+        });
         expect(out).toContain('export const defaultVendor: VendorBundle');
         expect(out).not.toContain('export const customVendor');
         // Header comment hint mirrors the chosen name.
