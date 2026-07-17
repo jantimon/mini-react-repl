@@ -26,7 +26,7 @@ import * as RefreshRuntime from 'react-refresh/runtime';
 import type { ToIframe, FromIframe, ModulePayload } from './protocol.ts';
 import { showOverlay, hideOverlay, setOverlayEnabled, type OverlayError } from './overlay.ts';
 import { wrapModuleBody } from './module-wrapper.ts';
-import { buildDataUrlLabels, sanitizeStack } from './sanitize-stack.ts';
+import { buildUrlLabels, sanitizeStack } from './sanitize-stack.ts';
 
 // Baked into the document by `generatePreviewHtml`. Not `window.frameElement`:
 // that's null across the preview's opaque sandbox origin.
@@ -296,11 +296,11 @@ window.addEventListener('unhandledrejection', (event) => {
   });
 });
 
-// Lazy — the import map script tag is static in <head>, but most sessions
-// never throw, so don't parse it until the first error.
-let dataUrlLabels: Map<string, string> | null = null;
-function getDataUrlLabels(): Map<string, string> {
-  if (!dataUrlLabels) {
+// Lazy — the import map tag is in <head> before any user code runs, but most
+// sessions never throw, so don't parse it until the first error.
+let urlLabels: Map<string, string> | null = null;
+function getUrlLabels(): Map<string, string> {
+  if (!urlLabels) {
     let imports: Record<string, string> = {};
     try {
       const el = document.querySelector('script[type="importmap"]');
@@ -312,17 +312,17 @@ function getDataUrlLabels(): Map<string, string> {
       // Malformed import map — the module loader would have complained
       // already; fall through to bare truncation.
     }
-    dataUrlLabels = buildDataUrlLabels(imports);
+    urlLabels = buildUrlLabels(imports);
   }
-  return dataUrlLabels;
+  return urlLabels;
 }
 
 function reportRuntimeError(err: OverlayError): void {
   if (err.kind === 'runtime') {
-    // Vendor modules load from multi-megabyte data: URLs, and every stack
-    // frame inside them repeats the full URL. Shrink to import-map
-    // specifiers before the stack hits the overlay DOM or postMessage.
-    const labels = getDataUrlLabels();
+    // Every frame inside a vendor module repeats that module's URL. Shrink
+    // to import-map specifiers before the stack hits the overlay DOM or
+    // postMessage.
+    const labels = getUrlLabels();
     err = {
       ...err,
       message: sanitizeStack(err.message, labels),

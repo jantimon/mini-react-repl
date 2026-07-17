@@ -14,6 +14,14 @@ describe('preview-html', () => {
     expect(html).toContain('"react":"/vendor/react.js"');
   });
 
+  it('escapes < so a specifier cannot break out of the script element', () => {
+    const html = generatePreviewHtml({
+      importMap: { imports: { evil: '/x.js?</script><img src=x onerror=alert(1)>' } },
+    });
+    expect(html).not.toContain('</script><img');
+    expect(html).toContain('\\u003c/script>');
+  });
+
   it('injects headHtml before the import map', () => {
     const html = generatePreviewHtml({
       importMap,
@@ -69,5 +77,55 @@ describe('preview-html', () => {
   it('combines the overlay and hmr opt-outs without mangling the html tag', () => {
     const html = generatePreviewHtml({ importMap, showErrorOverlay: false, hmr: false });
     expect(html).toContain('<html lang="en" data-overlay="off" data-hmr="off">');
+  });
+});
+
+/**
+ * Which branch `generatePreviewHtml` takes, and what it carries. That the
+ * re-hosting itself works is asserted where it can actually run — against
+ * real engines in tests/e2e/vendor-urls.spec.ts.
+ */
+describe('preview-html vendor data: URLs', () => {
+  const dataUrl = `data:text/javascript;base64,${btoa('export const x = 1;')}`;
+
+  it('inlines the map as-is when no entry is a data: module', () => {
+    const html = generatePreviewHtml({
+      importMap: { imports: { react: 'https://esm.sh/react', dayjs: '/vendor/dayjs.js' } },
+    });
+    expect(html).toContain('<script type="importmap">');
+    expect(html).toContain('"react":"https://esm.sh/react"');
+  });
+
+  it('re-hosts data: modules at boot instead of inlining the map', () => {
+    const html = generatePreviewHtml({ importMap: { imports: { react: dataUrl } } });
+    // No static tag survives for the parser — the map is built at boot.
+    expect(html).not.toContain('<script type="importmap">');
+    expect(html).toContain(dataUrl);
+  });
+
+  it('leaves non-data entries alone while re-hosting the data ones', () => {
+    const html = generatePreviewHtml({
+      importMap: { imports: { react: dataUrl, dayjs: 'https://esm.sh/dayjs' } },
+    });
+    expect(html).toContain('https://esm.sh/dayjs');
+    expect(html).toContain(dataUrl);
+  });
+
+  it('takes the re-hosting branch for a data: module hiding under scopes', () => {
+    const html = generatePreviewHtml({
+      importMap: { imports: { react: '/vendor/react.js' }, scopes: { '/a/': { b: dataUrl } } },
+    });
+    expect(html).not.toContain('<script type="importmap">');
+  });
+
+  it('carries the map ahead of every module script, so it lands before they run', () => {
+    const html = generatePreviewHtml({ importMap: { imports: { react: dataUrl } } });
+    expect(html.indexOf(dataUrl)).toBeLessThan(html.indexOf('<script type="module">'));
+  });
+
+  it('still emits exactly the runtime + preamble module scripts', () => {
+    expect(
+      countModuleScripts(generatePreviewHtml({ importMap: { imports: { react: dataUrl } } })),
+    ).toBe(2);
   });
 });

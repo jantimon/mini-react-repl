@@ -95,27 +95,29 @@ jobs:
       # is built by `pnpm run build`, not present at install time.
       - run: pnpm install --frozen-lockfile
 
-      # Cache the downloaded browser (~170 MB) keyed on the lockfile, so the
-      # flaky cdn.playwright.dev download only runs on a genuine miss. Hangs
-      # there once burned a full 6h against the runner ceiling.
+      # Cache the downloaded browsers (~270 MB) so the flaky
+      # cdn.playwright.dev download only runs on a genuine miss. Hangs there
+      # once burned a full 6h against the runner ceiling. The browser set is
+      # part of the key: it isn't derivable from the lockfile, so adding an
+      # engine has to bust the cache or the install step below is skipped.
       - name: cache playwright browsers
         id: playwright-cache
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-playwright-chromium-firefox-${{ hashFiles('pnpm-lock.yaml') }}
 
-      - name: install playwright chromium (+ system deps)
+      - name: install playwright browsers (+ system deps)
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         timeout-minutes: 8
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm exec playwright install --with-deps chromium firefox
 
-      # On a cache hit the browser binary is restored, but apt-level system
+      # On a cache hit the browser binaries are restored, but apt-level system
       # deps are not — install just those (fast; most are preinstalled).
       - name: install playwright system deps
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         timeout-minutes: 5
-        run: pnpm exec playwright install-deps chromium
+        run: pnpm exec playwright install-deps chromium firefox
 
       - run: pnpm test:e2e
         timeout-minutes: 10
