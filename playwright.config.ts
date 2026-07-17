@@ -21,6 +21,14 @@ export default defineConfig({
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
     },
+    {
+      // A second engine, because chromium alone hides whole classes of cost
+      // (giant module URLs) and stack-shape differences. `inspect` is
+      // excluded: the picker's stack parsing is V8-only.
+      name: 'firefox',
+      use: { ...devices['Desktop Firefox'] },
+      testIgnore: /inspect\.spec\.ts/,
+    },
   ],
   webServer: [
     {
