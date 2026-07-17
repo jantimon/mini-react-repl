@@ -185,6 +185,8 @@ export function renderIndexTs(opts: {
   hasTypes: boolean;
   exportName: string;
   development: boolean;
+  /** Basename of `--out`, for the import path in the header. */
+  outDirName: string;
 }): string {
   const typesProp = opts.hasTypes
     ? `
@@ -213,7 +215,7 @@ export function renderIndexTs(opts: {
 //
 // Drop into <ReplProvider>:
 //
-//   import { ${opts.exportName} } from './vendor.generated';
+//   import { ${opts.exportName} } from './${opts.outDirName}';
 //   <ReplProvider vendor={${opts.exportName}}>…</ReplProvider>
 //
 // Loading sequence
@@ -312,6 +314,7 @@ export async function runBuild(opts: RunBuildOptions): Promise<void> {
       hasTypes,
       exportName: opts.exportName,
       development: opts.nodeEnv !== 'production',
+      outDirName: basename(outDir),
     }),
     'utf8',
   );

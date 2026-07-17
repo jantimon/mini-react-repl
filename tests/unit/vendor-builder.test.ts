@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { build, extractImports } from '../../src/vendor-builder/build.ts';
-import { deriveOutDir, renderIndexTs } from '../../src/vendor-builder/cli.ts';
+import { deriveOutDir, renderIndexTs, runBuild } from '../../src/vendor-builder/cli.ts';
 
 const REQUIRED_CORE = [
   'react',
@@ -306,6 +306,7 @@ export { forEach } from 'lodash-es';
           hasTypes: true,
           exportName: 'customVendor',
           development: true,
+          outDirName: 'vendor.generated',
         });
         // importMap is lazy now — no static `import importMap from ...`
         expect(out).not.toContain("import importMap from './import-map.json'");
@@ -337,6 +338,7 @@ export { forEach } from 'lodash-es';
           hasTypes: false,
           exportName: 'customVendor',
           development: true,
+          outDirName: 'vendor.generated',
         });
         expect(out).toContain(
           'import(/* webpackChunkName: "mini-react-repl-import-map" */ \'./import-map.json\')',
@@ -354,6 +356,7 @@ export { forEach } from 'lodash-es';
           hasTypes: true,
           exportName: 'customVendor',
           development: false,
+          outDirName: 'vendor.generated',
         });
         expect(out).toContain('development: false,');
       });
@@ -363,6 +366,7 @@ export { forEach } from 'lodash-es';
           hasTypes: true,
           exportName: 'customVendor',
           development: true,
+          outDirName: 'vendor.generated',
         });
         expect(out).not.toContain('development:');
       });
@@ -372,12 +376,45 @@ export { forEach } from 'lodash-es';
           hasTypes: true,
           exportName: 'defaultVendor',
           development: true,
+          outDirName: 'vendor.generated',
         });
         expect(out).toContain('export const defaultVendor: VendorBundle');
         expect(out).not.toContain('export const customVendor');
         // Header comment hint mirrors the chosen name.
         expect(out).toContain('import { defaultVendor }');
       });
+
+      it('interpolates outDirName into the header import path', () => {
+        const out = renderIndexTs({
+          hasTypes: false,
+          exportName: 'viewVendor',
+          development: false,
+          outDirName: 'vendor-view.generated',
+        });
+        expect(out).toContain("import { viewVendor } from './vendor-view.generated';");
+      });
+    });
+
+    describe('runBuild', () => {
+      it(
+        'names the --out folder in the generated header',
+        async () => {
+          const entry = await makeEntry(CORE_BLOCK);
+          const outDir = join(dirname(entry), 'vendor-view.generated');
+
+          await runBuild({
+            entry,
+            outDir,
+            nodeEnv: 'development',
+            types: false,
+            exportName: 'viewVendor',
+          });
+
+          const index = await readFile(join(outDir, 'index.ts'), 'utf8');
+          expect(index).toContain("import { viewVendor } from './vendor-view.generated';");
+        },
+        TIMEOUT,
+      );
     });
   });
 });
