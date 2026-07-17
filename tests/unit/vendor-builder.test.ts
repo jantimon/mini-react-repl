@@ -306,6 +306,7 @@ export { forEach } from 'lodash-es';
           hasTypes: true,
           exportName: 'customVendor',
           development: true,
+          dirName: 'vendor.generated',
         });
         // importMap is lazy now — no static `import importMap from ...`
         expect(out).not.toContain("import importMap from './import-map.json'");
@@ -337,6 +338,7 @@ export { forEach } from 'lodash-es';
           hasTypes: false,
           exportName: 'customVendor',
           development: true,
+          dirName: 'vendor.generated',
         });
         expect(out).toContain(
           'import(/* webpackChunkName: "mini-react-repl-import-map" */ \'./import-map.json\')',
@@ -354,6 +356,7 @@ export { forEach } from 'lodash-es';
           hasTypes: true,
           exportName: 'customVendor',
           development: false,
+          dirName: 'vendor.generated',
         });
         expect(out).toContain('development: false,');
       });
@@ -363,6 +366,7 @@ export { forEach } from 'lodash-es';
           hasTypes: true,
           exportName: 'customVendor',
           development: true,
+          dirName: 'vendor.generated',
         });
         expect(out).not.toContain('development:');
       });
@@ -372,11 +376,23 @@ export { forEach } from 'lodash-es';
           hasTypes: true,
           exportName: 'defaultVendor',
           development: true,
+          dirName: 'vendor.generated',
         });
         expect(out).toContain('export const defaultVendor: VendorBundle');
         expect(out).not.toContain('export const customVendor');
         // Header comment hint mirrors the chosen name.
         expect(out).toContain('import { defaultVendor }');
+      });
+
+      it('points the header import at --out, not the default folder', () => {
+        const out = renderIndexTs({
+          hasTypes: false,
+          exportName: 'viewVendor',
+          development: false,
+          dirName: 'vendor-view.generated',
+        });
+        expect(out).toContain("import { viewVendor } from './vendor-view.generated';");
+        expect(out).not.toContain("from './vendor.generated'");
       });
     });
   });
