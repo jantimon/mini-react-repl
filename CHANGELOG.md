@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.25.1
+
+### Patch Changes
+
+- 1f42f91: Point the generated vendor header at `--out`
+
+  `repl-vendor-build --out other.generated` wrote a header telling readers to
+  `import … from './vendor.generated'` — the default folder, not the one it built.
+  The header now names the folder it actually wrote.
+
 ## 0.25.0
 
 ### Minor Changes
