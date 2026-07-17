@@ -63,9 +63,11 @@ export type PreviewHtmlOptions = {
   hmr?: boolean;
 };
 
-/** JSON safe to inline in a `<script>`: `<` can't start a closing tag. */
 function inlineJson(value: unknown): string {
-  return JSON.stringify(value).replace(/</g, '\\u003c');
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
 }
 
 /** Every mapped URL: `imports` values plus each scope's values. */
