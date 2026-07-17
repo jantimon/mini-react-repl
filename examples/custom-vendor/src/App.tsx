@@ -18,7 +18,8 @@ const HELLO: Files = {
   'App.tsx': initialAppSource,
 };
 
-const PROD = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).has('prod') : false;
+const PROD =
+  typeof window !== 'undefined' ? new URLSearchParams(window.location.search).has('prod') : false;
 
 export function App() {
   const [files, setFiles] = useState<Files>(HELLO);
