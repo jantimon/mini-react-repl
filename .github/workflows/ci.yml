@@ -72,7 +72,7 @@ jobs:
       - run: pnpm --filter gh-pages build
 
   e2e:
-    name: e2e (chromium)
+    name: e2e (chromium + firefox)
     runs-on: ubuntu-latest
     needs: lint-and-test
     timeout-minutes: 20
