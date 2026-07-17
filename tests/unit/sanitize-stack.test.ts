@@ -5,10 +5,12 @@ const REACT_DOM_URL = `data:text/javascript;base64,${btoa('function beginWork(){
 const VENDOR_BLOB = 'blob:null/1f0c7a2e-vendor';
 
 const LABELS = buildUrlLabels({
-  'react-dom/client': REACT_DOM_URL,
-  react: 'data:text/javascript;base64,QUFB',
-  clsx: VENDOR_BLOB,
-  dayjs: 'https://esm.sh/dayjs',
+  imports: {
+    'react-dom/client': REACT_DOM_URL,
+    react: 'data:text/javascript;base64,QUFB',
+    clsx: VENDOR_BLOB,
+    dayjs: 'https://esm.sh/dayjs',
+  },
 });
 
 describe('buildUrlLabels', () => {
@@ -20,6 +22,19 @@ describe('buildUrlLabels', () => {
 
   it('inverts blob: entries — what the preview re-hosts vendor data URLs as', () => {
     expect(LABELS.get(VENDOR_BLOB)).toBe('clsx');
+  });
+
+  it('labels scoped entries too, which the preview re-hosts alongside imports', () => {
+    const labels = buildUrlLabels({
+      imports: { react: VENDOR_BLOB },
+      scopes: { '/legacy/': { react: 'blob:null/scoped-react' } },
+    });
+    expect(labels.get('blob:null/scoped-react')).toBe('react');
+    expect(labels.get(VENDOR_BLOB)).toBe('react');
+  });
+
+  it('tolerates a map with neither imports nor scopes', () => {
+    expect(buildUrlLabels({}).size).toBe(0);
   });
 });
 

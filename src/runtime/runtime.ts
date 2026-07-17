@@ -26,7 +26,7 @@ import * as RefreshRuntime from 'react-refresh/runtime';
 import type { ToIframe, FromIframe, ModulePayload } from './protocol.ts';
 import { showOverlay, hideOverlay, setOverlayEnabled, type OverlayError } from './overlay.ts';
 import { wrapModuleBody } from './module-wrapper.ts';
-import { buildUrlLabels, sanitizeStack } from './sanitize-stack.ts';
+import { buildUrlLabels, sanitizeStack, type LabelledMap } from './sanitize-stack.ts';
 
 // Baked into the document by `generatePreviewHtml`. Not `window.frameElement`:
 // that's null across the preview's opaque sandbox origin.
@@ -301,18 +301,15 @@ window.addEventListener('unhandledrejection', (event) => {
 let urlLabels: Map<string, string> | null = null;
 function getUrlLabels(): Map<string, string> {
   if (!urlLabels) {
-    let imports: Record<string, string> = {};
+    let map: LabelledMap = {};
     try {
       const el = document.querySelector('script[type="importmap"]');
-      if (el?.textContent) {
-        imports =
-          (JSON.parse(el.textContent) as { imports?: Record<string, string> }).imports ?? {};
-      }
+      if (el?.textContent) map = JSON.parse(el.textContent) as LabelledMap;
     } catch {
       // Malformed import map — the module loader would have complained
       // already; fall through to bare truncation.
     }
-    urlLabels = buildUrlLabels(imports);
+    urlLabels = buildUrlLabels(map);
   }
   return urlLabels;
 }

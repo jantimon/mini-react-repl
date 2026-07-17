@@ -63,6 +63,10 @@ export type PreviewHtmlOptions = {
   hmr?: boolean;
 };
 
+/**
+ * JSON safe to inline in a `<script>`: `<` can't start a closing tag, and the
+ * U+2028/U+2029 line separators can't terminate a statement.
+ */
 function inlineJson(value: unknown): string {
   return JSON.stringify(value)
     .replace(/</g, '\\u003c')

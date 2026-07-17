@@ -12,15 +12,25 @@
  * @internal
  */
 
+/** The parts of a parsed import map that name modules. */
+export type LabelledMap = {
+  imports?: Record<string, string>;
+  scopes?: Record<string, Record<string, string>>;
+};
+
 /**
- * Invert an import map's `imports` into URL → specifier. `http(s)` entries
- * are skipped — they already read as themselves.
+ * Invert an import map into URL → specifier, scopes included. `http(s)`
+ * entries are skipped — they already read as themselves.
  */
-export function buildUrlLabels(imports: Record<string, string>): Map<string, string> {
+export function buildUrlLabels(map: LabelledMap): Map<string, string> {
   const labels = new Map<string, string>();
-  for (const [specifier, url] of Object.entries(imports)) {
-    if (url.startsWith('data:') || url.startsWith('blob:')) labels.set(url, specifier);
-  }
+  const add = (entries: Record<string, string>): void => {
+    for (const [specifier, url] of Object.entries(entries)) {
+      if (url.startsWith('data:') || url.startsWith('blob:')) labels.set(url, specifier);
+    }
+  };
+  add(map.imports ?? {});
+  for (const scope of Object.values(map.scopes ?? {})) add(scope);
   return labels;
 }
 
