@@ -1,14 +1,18 @@
 /**
- * V8 `Error.stack` parser.
+ * `Error.stack` parser, tolerant of both stack dialects browsers use.
  *
- * V8 emits one of two shapes per call site:
+ * V8 (Chrome, Edge, Node) emits one of two shapes per call site:
  *   - `at FnName (path:line:col)`        — named call site
  *   - `at path:line:col`                 — anonymous / module-level
  *
+ * Firefox and Safari (SpiderMonkey / JavaScriptCore) instead emit:
+ *   - `FnName@path:line:col`             — named call site
+ *   - `@path:line:col`                   — anonymous / module-level
+ *
  * The parser extracts every recognizable frame and skips lines that don't
- * match (the leading `Error: …` summary, async wrappers, etc.). It does
- * **not** filter by URL scheme — the caller decides which frames are worth
- * looking up against a source map.
+ * match any shape (the leading `Error: …` summary, async wrappers, etc.). It
+ * does **not** filter by URL scheme — the caller decides which frames are
+ * worth looking up against a source map.
  *
  * @internal
  */
@@ -62,22 +66,49 @@ function parseLine(line: string): ParsedFrame | null {
       col: Number(bare[3]),
     };
   }
+  // Firefox / Safari: `FnName@path:line:col` or `@path:line:col` (anonymous).
+  // functionName is everything up to the first `@` (may be empty); it can
+  // itself contain `@`-free suffixes like `*` (generator/async markers) or
+  // `/<` (anonymous-closure markers) — those are kept as-is since callers
+  // only use functionName for display, never for lookup.
+  const atForm = line.match(/^([^@]*)@([^@]+):(\d+):(\d+)$/);
+  if (atForm) {
+    return {
+      functionName: atForm[1] || null,
+      fileName: atForm[2] ?? '',
+      line: Number(atForm[3]),
+      col: Number(atForm[4]),
+    };
+  }
   return null;
 }
 
 /**
- * Schemes we never look up against a source map: vendor/framework URLs
- * (no inline map points at user `.tsx`), `blob:` URLs (the preview
- * document, plus module blobs minted inside the iframe), and
- * `about:srcdoc` (kept for back-compat with older frames; the iframe
- * document loads from `blob:` today).
+ * Schemes we never look up against a source map: vendor/framework URLs (no
+ * inline map points at user `.tsx`) and `about:srcdoc` (kept for back-compat
+ * with older frames; the iframe document loads from `blob:` today).
+ *
+ * `blob:` is deliberately **not** here. On V8 and SpiderMonkey, a wrapped
+ * user module's frame names its logical path (`App.tsx`) via the `//#
+ * sourceURL` pragma `wrapModuleBody` adds, and that's the only shape those
+ * two engines ever report for it — a `blob:` frame from either engine is
+ * always vendor/runtime code with no source map, so excluding the whole
+ * scheme was harmless. JavaScriptCore (Safari) does not honor that pragma
+ * for ES modules loaded via `import()` of a `blob:` URL, though, and
+ * instead reports the module's blob URL itself — so on Safari a user
+ * module's frame *is* a `blob:` URL. `getModuleRecord`'s blob-URL fallback
+ * resolves that case; a genuine vendor/runtime blob (not a registered
+ * module) still safely falls through as a lookup miss (`lookupSourcePosition`
+ * returns `null`), so widening this filter costs nothing beyond one extra
+ * (cheap) lookup attempt per such frame.
  */
-const NON_SOURCE_SCHEME =
-  /^(?:https?|blob|data|file|chrome-extension|moz-extension|webpack|about):/i;
+const NON_SOURCE_SCHEME = /^(?:https?|data|file|chrome-extension|moz-extension|webpack|about):/i;
 
 /**
- * `true` if this frame's `fileName` is a candidate for source-map lookup
- * (i.e. a `//# sourceURL` pragma value, like `App.tsx`). Vendor / blob /
+ * `true` if this frame's `fileName` is a candidate for source-map lookup —
+ * i.e. either a `//# sourceURL` pragma value like `App.tsx` (V8 /
+ * SpiderMonkey), or a `blob:` URL that might resolve via
+ * `getModuleRecord`'s blob-URL fallback (JavaScriptCore). Vendor / data /
  * about: frames return `false`.
  */
 export function isSourceCandidate(frame: ParsedFrame): boolean {
